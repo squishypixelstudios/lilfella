@@ -1,0 +1,264 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lil Fella: title screen options</title>
+<style>
+  body { background: #22241f; color: #d6dacd; font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 20px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { margin: 0 0 16px; opacity: .75; max-width: 70ch; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; }
+  .opt { width: 368px; }
+  canvas { width: 368px; height: 448px; image-rendering: pixelated; border-radius: 10px; display: block; border: 6px solid #111; }
+  h2 { font-size: 15px; margin: 10px 0 2px; }
+  .opt p { font-size: 13px; margin: 0 0 8px; }
+  button { font: inherit; padding: 6px 12px; margin-right: 6px; border-radius: 6px; border: 1px solid #70746a; background: #33362f; color: inherit; cursor: pointer; }
+  button.on { background: #c6c9be; color: #1e211c; }
+</style>
+<h1>Lil Fella: three title screens to choose from</h1>
+<p>Each one is drawn at the device's real resolution (184x224, four shades) with the real sprites and font, and loops every 20 seconds.
+The music here is a browser stand-in for the feel; on the device it will be played by the game's own bloop synth.</p>
+<div class="row" id="row"></div>
+<script>
+const W = 184, H = 224, BEAT = 0.625, LOOP = 20;
+const PAL = [[198, 201, 190], [180, 184, 172], [112, 116, 106], [30, 33, 28]];
+const RAW = {LOAF:["00010000000100000000","00101000001010000000","01000111110001000000","01000000000001000000","10020000000200100000","10000003000000100000","10000030300000111111","01000000000000000011","10000000000000000001","10000000000000000001","01111111111111111110",],PUDDLE:["00000111111110000000","00011000000001100000","00100000000000010000","01000020000020001000","01000020000020000100","10000000030000000110","10000000000000000001","01001110000000110010","00110001111111001100",],JELLY:["00000111100000","00011000011000","00100000000100","01011000000010","01010000000010","10000020002001","10000020002001","10000000000001","10000000300001","10000003030001","10000000000001","10000000000001","01010100101010","10101011010101",],DANGO:["0000011100000","0001100011000","0010200020100","0010200020100","0010003000100","0001100011000","0010011100100","0100000000010","1000000000001","1001100011001","1000000000001","0100000000010","0011111111100",],PUFF:["0000011000001100000","0001100100010011000","0010000011100000100","0100000000000000010","1000020000000200001","1000020000000200001","1000000000000000001","1000000003000000001","1000000030300000001","1000000000000000001","0100000000000000010","0011111111111111100","0000101000001010000",],MARSHY:["00111111111111100","01444004444400441","14400004444440001","01111111111111110","00010000000001000","00010020002001000","00010000300001000","00010000000001000","00111111111111100","00101001010010100",],BOOP:["0000011100000","0000144410000","0000144410000","0000011100000","0000010100000","0000010100000","0011110111100","0100000000010","1002000002001","1000000000001","1000003000001","1000000000001","0100000000010","0011111111100",],FUBZ:["00001000000010000","00010100000101000","00010011111001000","00100000000000100","00100020002000100","01000000100000010","10000000000000001","10110000000001101","01001100000110010","01000000300000010","00100000000000100","00011111111111000","00000100000100000",],NIMBUS:["00000111100000000","00011444411110000","00144444444441100","01444444444444410","14440204440204441","14444444344444441","01444444444444410","00114444444441100","00001111111110000","00400004000040000","00000040000400000","00400004000040000",],BALLBOI:["00000011111000000","00001100000110000","00114000000001100","01140000000000110","01040000000000010","11000000000000011","10000110001100001","10001001110010001","10001000000010001","11001020002010011","01001000300010010","01100100000100110","00110011111001100","00001100000110000","00000011111000000",],};
+const FONTHEX = "00000000003E5B4F5B3E3E6B4F6B3E1C3E7C3E1C183C7E3C181C577D571C1C5E7F5E1C00183C1800FFE7C3E7FF0018241800FFE7DBE7FF30483A060E2629792926407F050507407F05253F5A3CE73C5A7F3E1C1C08081C1C3E7F14227F22145F5F005F5F06097F017F006689956A606060606094A2FFA29408047E040810207E201008082A1C08081C2A08081E101010100C1E0C1E0C30383E3830060E3E0E06000000000000005F00000007000700147F147F14242A7F2A12231308646236495620500008070300001C2241000041221C002A1C7F1C2A08083E080800807030000808080808000060600020100804023E5149453E00427F400072494949462141494D331814127F1027454545393C4A49493141211109073649494936464949291E0000140000004034000000081422411414141414004122140802015909063E415D594E7C1211127C7F494949363E414141227F4141413E7F494949417F090909013E414151737F0808087F00417F41002040413F017F081422417F404040407F021C027F7F0408107F3E4141413E7F090909063E4151215E7F09192946264949493203017F01033F4040403F1F2040201F3F4038403F631408146303047804036159494D43007F4141410204081020004141417F04020102044040404040000307080020545478407F284444383844444428384444287F385454541800087E090218A4A49C787F0804047800447D40002040403D007F1028440000417F40007C047804787C080404783844444438FC1824241818242418FC7C08040408485454542404043F44243C4040207C1C2040201C3C4030403C44281028444C9090907C4464544C4400083641000000770000004136080002010204023C2623263C1EA1A161123A4040207A385454555921555579412254547842215554784020545579400C1E5272123955555559395454545939555454580000457C410002457D420001457C407D1211127DF0282528F07C545545002054547C547C0A097F4932494949323A4444443A324A4848303A4141217A3A42402078009DA0A07D3D4242423D3D4040403D3C24FF2424487E4943662B2FFC2F2BFF0929F620C0887E090320545479410000447D413048484A32384040227A007A0A0A727D0D19317D2629292F28262929292630484D4020380808080808080808382F10C8ACBA2F102834FA00007B000008142A142222142A14085500550055AA55AA55AAFF55FF55FF000000FF00101010FF00141414FF001010FF00FF1010F010F0141414FC001414F700FF0000FF00FF1414F404FC141417101F10101F101F1414141F00101010F0000000001F101010101F10101010F010000000FF101010101010101010FF10000000FF140000FF00FF00001F10170000FC04F414141710171414F404F40000FF00F714141414141414F700F7141414171410101F101F141414F4141010F010F000001F101F0000001F14000000FC140000F010F01010FF10FF141414FF141010101F00000000F010FFFFFFFFFFF0F0F0F0F0FFFFFF0000000000FFFF0F0F0F0F0F3844443844FC4A4A4A347E02020606027E027E0263554941633844443C04407E201E2006027E020299A5E7A5991C2A492A1C4C7201724C304A4D4D303048784830BC625A463D3E494949007E0101017E2A2A2A2A2A44445F444440514A444040444A51400000FF0103E080FF000008086B6B0836123624360006090906000018180000001010003040FF0101001F01011E00191D1712003C3C3C3C0000000000";
+const FONT = new Uint8Array(1280);
+for (let i = 0; i < 1280; i++) FONT[i] = parseInt(FONTHEX.substr(i * 2, 2), 16);
+
+// sprites: grid + "inside the outline" mask (so a fella in front hides the one behind)
+const SPR = {}, NAMES = Object.keys(RAW);
+for (const n of NAMES) {
+  const rows = RAW[n], h = rows.length, w = rows[0].length;
+  const g = rows.map(r => [...r].map(Number));
+  const out = rows.map(() => new Array(w).fill(false));
+  const st = [];
+  for (let x = 0; x < w; x++) { st.push([x, 0], [x, h - 1]); }
+  for (let y = 0; y < h; y++) { st.push([0, y], [w - 1, y]); }
+  while (st.length) {
+    const [x, y] = st.pop();
+    if (x < 0 || y < 0 || x >= w || y >= h || out[y][x] || g[y][x]) continue;
+    out[y][x] = true; st.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+  }
+  SPR[n] = { w, h, g, out };
+}
+
+let px;   // the frame being drawn (shade per pixel)
+const set = (x, y, s) => { if (x >= 0 && y >= 0 && x < W && y < H) px[y * W + x] = s; };
+function rect(x, y, w, h, s) { x = Math.round(x); y = Math.round(y); for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) set(x + i, y + j, s); }
+function roundBox(x, y, w, h, s, fill) {
+  x = Math.round(x); y = Math.round(y);
+  if (fill !== undefined) rect(x + 1, y + 1, w - 2, h - 2, fill);
+  rect(x + 2, y, w - 4, 1, s); rect(x + 2, y + h - 1, w - 4, 1, s); rect(x, y + 2, 1, h - 4, s); rect(x + w - 1, y + 2, 1, h - 4, s);
+  set(x + 1, y + 1, s); set(x + w - 2, y + 1, s); set(x + 1, y + h - 2, s); set(x + w - 2, y + h - 2, s);
+}
+// a fella, centred on cx, standing on by, stretched sx by sy
+function spr(name, cx, by, sx, sy, ink = 3, flip = false) {
+  const s = SPR[name], dw = Math.max(1, Math.round(s.w * sx)), dh = Math.max(1, Math.round(s.h * sy));
+  const x0 = Math.round(cx - dw / 2), y0 = Math.round(by - dh);
+  for (let j = 0; j < dh; j++) {
+    const sy_ = Math.min(s.h - 1, Math.floor((j + .5) / dh * s.h));
+    for (let i = 0; i < dw; i++) {
+      let sx_ = Math.min(s.w - 1, Math.floor((i + .5) / dw * s.w)); if (flip) sx_ = s.w - 1 - sx_;
+      const v = s.g[sy_][sx_];
+      if (v) set(x0 + i, y0 + j, v === 4 ? Math.max(1, ink - 1) : ink);
+      else if (!s.out[sy_][sx_]) set(x0 + i, y0 + j, 0);
+    }
+  }
+}
+// one letter, top-left at x,y, scale s (may be fractional: used for pops)
+function chr(c, x, y, s, sh = 3) {
+  const code = c.charCodeAt(0), dw = Math.round(5 * s), dh = Math.round(8 * s);
+  x = Math.round(x); y = Math.round(y);
+  for (let j = 0; j < dh; j++) for (let i = 0; i < dw; i++) {
+    const col = Math.min(4, Math.floor((i + .5) / dw * 5)), row = Math.min(7, Math.floor((j + .5) / dh * 8));
+    if (FONT[code * 5 + col] >> row & 1) set(x + i, y + j, sh);
+  }
+}
+function text(str, cx, y, s, sh = 3) { const w = str.length * 6 * s - s; for (let k = 0; k < str.length; k++) chr(str[k], cx - w / 2 + k * 6 * s, y, s, sh); }
+const clamp01 = u => u < 0 ? 0 : u > 1 ? 1 : u;
+const backOut = u => { u = clamp01(u) - 1; return 1 + 2.70158 * u * u * u + 1.70158 * u * u; };
+const cubicIn = u => { u = clamp01(u); return u * u * u; };
+function bounceOut(u) {
+  u = clamp01(u); const n = 7.5625, d = 2.75;
+  if (u < 1 / d) return n * u * u;
+  if (u < 2 / d) return n * (u -= 1.5 / d) * u + .75;
+  if (u < 2.5 / d) return n * (u -= 2.25 / d) * u + .9375;
+  return n * (u -= 2.625 / d) * u + .984375;
+}
+const mod = (a, b) => ((a % b) + b) % b;
+const TAU = Math.PI * 2;
+function tapToStart(t) { if (t > 2.5 && mod(t, BEAT * 2) < BEAT * 1.5) text("TAP TO START", W / 2, 211, 1, 2); }
+
+// ---------------------------------------------------------------- A: the parade
+function drawParade(t) {
+  // bubbles drifting up
+  for (let i = 0; i < 7; i++) {
+    const y = 240 - mod(i * 37 + t * (i % 2 ? 26 : 13), 260), x = 14 + i * 26 + 6 * Math.sin(TAU * t / 5 + i), r = 3 + i % 3;
+    for (let a = 0; a < 16; a++) set(Math.round(x + r * Math.cos(a * TAU / 16)), Math.round(y + r * Math.sin(a * TAU / 16)), 1);
+  }
+  // title: letters drop in one at a time, then ride a wave
+  const lines = [["LiL", 22], ["FeLLa", 68]]; let k = 0;
+  for (const [str, y0] of lines) for (let c = 0; c < str.length; c++, k++) {
+    const u = (t - 0.2 - k * 0.18) / 0.7, x = W / 2 - (str.length * 30 - 5) / 2 + c * 30;
+    const y = u < 1 ? -50 + (y0 + 50) * bounceOut(u) : y0 + 3 * Math.sin(TAU * t / (BEAT * 2) - k * 0.7);
+    if (u > 0) chr(str[c], x, y, 5);
+  }
+  // far row: small, grey, strolling right
+  rect(0, 150, W, 1, 1);
+  for (let i = 0; i < 10; i++) {
+    const x = mod(i * 30 + t * 15, 300) - 30, p = mod(t / BEAT + i * 0.37, 1);
+    spr(NAMES[(i * 3) % 10], x, 150 - 3 * 4 * p * (1 - p), 1, 1, 2, true);
+  }
+  // near row: big, hopping left in a wave, squashing as they land
+  rect(0, 196, W, 1, 3);
+  for (let i = 0; i < 12; i++) set(mod(i * 16 - t * 23, 192) - 4, 198, 2);
+  for (let i = 0; i < 10; i++) {
+    const x = mod(i * 46 - t * 23, 460) - 40, p = mod(t / BEAT + i * 0.5, 1);
+    const sq = p < 0.18 ? 1 - p / 0.18 : p > 0.9 ? (p - 0.9) / 0.1 * 0.5 : -0.4 * Math.sin(Math.PI * (p - 0.18) / 0.72);
+    spr(NAMES[i], x, 196 - 14 * 4 * p * (1 - p), 2 * (1 + 0.14 * sq), 2 * (1 - 0.14 * sq));
+  }
+  tapToStart(t);
+}
+
+// ---------------------------------------------------------------- B: the carousel
+function drawCarousel(t) {
+  // twinkles
+  for (let i = 0; i < 14; i++) {
+    const x = (i * 53 + 17) % W, y = 62 + (i * 31) % 50, on = mod(t / (BEAT * 2) + i * 0.31, 1);
+    if (on < 0.5) { set(x, y, 2); if (on < 0.25) { set(x - 1, y, 1); set(x + 1, y, 1); set(x, y - 1, 1); set(x, y + 1, 1); } }
+  }
+  // title: letters slide in from alternate sides, then a hop runs along them every bar
+  const str = "LIL FELLA";
+  for (let k = 0; k < str.length; k++) {
+    if (str[k] === " ") continue;
+    const u = (t - 0.2 - k * 0.12) / 0.7, x0 = W / 2 - (str.length * 18 - 3) / 2 + k * 18;
+    const x = x0 + (k % 2 ? 220 : -220) * (1 - backOut(u));
+    const w = mod(t, BEAT * 4) - k * 0.07, hop = t > 2.4 && w > 0 && w < 0.4 ? -7 * Math.sin(Math.PI * w / 0.4) : 0;
+    chr(str[k], x, 26 + hop, 3);
+  }
+  rect(30, 56, W - 60, 1, 1);
+  // the ring
+  const list = [];
+  for (let i = 0; i < 10; i++) {
+    const a = TAU * i / 10 + TAU * t / LOOP, d = Math.cos(a);
+    list.push({ i, d, x: W / 2 + 70 * Math.sin(a) });
+  }
+  list.sort((p, q) => p.d - q.d);
+  for (const f of list) {
+    const k = (f.d + 1) / 2, s = 1 + 1.7 * Math.pow(k, 1.6), y = 152 + 26 * f.d, front = clamp01((f.d - 0.8) / 0.2);
+    const beat = Math.abs(Math.sin(Math.PI * t / BEAT + f.i * 0.6));
+    const hop = (1 + 5 * front) * beat * s * 0.6, sq = front * 0.1 * (1 - beat);
+    const sw = Math.round(SPR[NAMES[f.i]].w * s * 0.8);
+    rect(f.x - sw / 2, y + 1, sw, 1 + (k > 0.6 ? 1 : 0), 1);   // shadow
+    spr(NAMES[f.i], f.x, y - hop, s * (1 + sq), s * (1 - sq), f.d < -0.25 ? 2 : 3);
+  }
+  tapToStart(t);
+}
+
+// ---------------------------------------------------------------- C: the channel
+function drawChannel(t) {
+  // drifting dot grid
+  for (let y = -16; y < H + 16; y += 16) for (let x = -16; x < W + 16; x += 16) {
+    const X = Math.round(x + mod(t * 8, 16)), Y = Math.round(y + mod(t * 8, 16));
+    set(X, Y, 1); set(X + 1, Y, 1); set(X, Y + 1, 1); set(X + 1, Y + 1, 1);
+  }
+  // title: letters pop in one at a time; a swell runs along them as each card arrives
+  const str = "Lil Fella";
+  for (let k = 0; k < str.length; k++) {
+    if (str[k] === " ") continue;
+    const u = (t - 0.2 - k * 0.16) / 0.45; if (u <= 0) continue;
+    const w = mod(t, 2) - 0.1 - k * 0.06, swell = t > 2.4 && w > 0 && w < 0.35 ? 0.7 * Math.sin(Math.PI * w / 0.35) : 0;
+    const s = 3 * backOut(u) + swell, cx = W / 2 - (str.length * 18 - 3) / 2 + k * 18 + 7.5;
+    chr(str[k], cx - 2.5 * s, 34 - 4 * s, s);
+  }
+  // the card: each fella slides in, breathes, slides out
+  const card = (slot, off) => {
+    const n = NAMES[mod(slot, 10)], x = W / 2 + off;
+    roundBox(x - 64, 70, 128, 104, 3, 0); roundBox(x - 62, 72, 124, 100, 1);
+    const b = Math.sin(TAU * t / BEAT) * 0.04;
+    spr(n, x, 162, 5 * (1 - b), 5 * (1 + b));
+    text(n, x, 181, 1, 2);
+  };
+  const slot = Math.floor(t / 2), u = mod(t, 2) / 2;
+  if (u < 0.3) { card(slot - 1, -W * cubicIn(u / 0.3 + 0.0) * 1.1); card(slot, W * 1.1 * (1 - backOut(u / 0.3))); }
+  else card(slot, 0);
+  // pager
+  for (let i = 0; i < 10; i++) {
+    const x = W / 2 - 45 + i * 10, on = i === mod(slot, 10);
+    rect(x - 1, 197, 3, 3, on ? 3 : 1); if (on) { rect(x - 2, 198, 5, 1, 3); rect(x, 196, 1, 5, 3); }
+  }
+  tapToStart(t);
+}
+
+// ---------------------------------------------------------------- music (a stand-in for the device's synth)
+const TUNES = {
+  parade: { swing: 0, ch: [[48, 52, 55, 60], [45, 48, 52, 57], [41, 45, 48, 53], [43, 47, 50, 55], [48, 52, 55, 60], [45, 48, 52, 57], [43, 47, 50, 53], [48, 52, 55, 60]],
+    mel: [72,0,76,0,79,0,76,0, 81,0,79,0,76,0,72,0, 77,0,81,0,84,0,81,0, 83,0,79,0,74,0,79,0, 72,76,79,0,84,0,79,0, 81,0,84,0,81,79,76,0, 77,0,81,0,79,0,83,0, 84,0,79,0,76,0,74,0] },
+  carousel: { swing: 0, ch: [[41, 45, 48, 52], [40, 43, 47, 50], [38, 41, 45, 48], [36, 40, 43, 47], [41, 45, 48, 52], [40, 43, 47, 50], [38, 41, 45, 48], [43, 47, 50, 53]],
+    mel: [76,0,0,72,0,0,69,0, 74,0,0,71,0,0,67,0, 72,0,0,69,0,0,65,0, 67,0,71,0,72,0,76,0, 76,0,0,81,0,0,76,0, 74,0,0,79,0,0,74,0, 72,0,74,0,77,0,81,0, 79,0,0,74,0,71,0,0] },
+  channel: { swing: 0.09, ch: [[38, 42, 45, 49], [35, 38, 42, 45], [43, 47, 50, 54], [45, 49, 52, 55], [38, 42, 45, 49], [35, 38, 42, 45], [43, 47, 50, 54], [45, 49, 52, 55]],
+    mel: [78,0,81,0,0,78,0,74, 0,74,0,78,0,74,71,0, 74,0,78,0,0,74,0,71, 0,73,0,76,0,79,76,0, 78,0,81,0,0,85,0,81, 0,78,0,81,0,78,74,0, 79,0,78,0,74,0,71,0, 73,0,76,0,81,0,79,76] },
+};
+let ac = null, playing = null;   // playing: {key, gain, timer, t0}
+const hz = m => 440 * Math.pow(2, (m - 69) / 12);
+function note(out, m, t, dur, type, vol) {
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.value = hz(m);
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.02);
+}
+function scheduleLoop(p, start) {
+  const T = TUNES[p.key], E = BEAT / 2;
+  for (let b = 0; b < 8; b++) {
+    const c = T.ch[b], t0 = start + b * 4 * BEAT;
+    note(p.gain, c[0], t0, BEAT * 1.6, "sine", 0.30); note(p.gain, c[0] + 12, t0, BEAT * 1.2, "triangle", 0.07);
+    note(p.gain, c[2], t0 + 2 * BEAT, BEAT * 1.4, "sine", 0.24); note(p.gain, c[2] + 12, t0 + 2 * BEAT, BEAT, "triangle", 0.05);
+    for (let e = 1; e < 8; e += 2) note(p.gain, [c[1], c[2], c[3], c[2]][(e - 1) / 2] + 12, t0 + (e + T.swing * 2) * E, 0.22, "triangle", 0.06);
+    for (let e = 0; e < 8; e++) {
+      const m = T.mel[b * 8 + e]; if (!m) continue;
+      const tt = t0 + (e + (e % 2 ? T.swing * 2 : 0)) * E;
+      note(p.gain, m, tt, 0.55, "sine", 0.22); note(p.gain, m + 12, tt, 0.25, "sine", 0.05);
+    }
+  }
+  p.timer = setTimeout(() => scheduleLoop(p, start + LOOP), (start + LOOP - ac.currentTime - 1.5) * 1000);
+}
+function stopMusic() {
+  if (!playing) return;
+  clearTimeout(playing.timer); playing.gain.gain.setTargetAtTime(0, ac.currentTime, 0.03);
+  const g = playing.gain; setTimeout(() => g.disconnect(), 300);
+  playing.btn.classList.remove("on"); playing.btn.textContent = "Play with music"; playing = null;
+}
+
+// ---------------------------------------------------------------- page
+const OPTS = [
+  ["parade", "A. The Parade", "Letters drop in and bounce one at a time, then ride a wave. All ten hop past in step, big in front and small behind.", drawParade],
+  ["carousel", "B. The Carousel", "Letters slide in from both sides. The ten ride a turning ring; whoever reaches the front gets a hop in the spotlight.", drawCarousel],
+  ["channel", "C. The Channel", "Letters pop in one by one. Each fella gets a portrait card that slides in, breathes and slides away, with its name.", drawChannel],
+];
+const SHOT = /^#shot=([a-z]+),([0-9.]+)$/.exec(location.hash);   // #shot=parade,7.3: just that screen, frozen at that time (for screenshots)
+if (SHOT) { document.body.innerHTML = "<div id=row></div>"; document.body.style.cssText = "margin:0;padding:0;overflow:hidden"; }
+for (const [key, title, blurb, draw] of OPTS) {
+  if (SHOT && SHOT[1] !== key) continue;
+  const div = document.createElement("div"); div.className = "opt";
+  div.innerHTML = `<canvas width="${W}" height="${H}"></canvas><h2>${title}</h2><p>${blurb}</p><button>Play with music</button><button>Replay intro</button>`;
+  document.getElementById("row").appendChild(div);
+  if (SHOT) div.querySelector("canvas").style.cssText = "border:0;border-radius:0";
+  const ctx = div.querySelector("canvas").getContext("2d"), img = ctx.createImageData(W, H), buf = new Uint8Array(W * H);
+  const [bPlay, bIntro] = div.querySelectorAll("button");
+  let t0 = performance.now() / 1000;
+  bIntro.onclick = () => { t0 = performance.now() / 1000; };
+  bPlay.onclick = () => {
+    const was = playing && playing.key === key; stopMusic(); if (was) return;
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)(); ac.resume();
+    const gain = ac.createGain(); gain.gain.value = 0.6; gain.connect(ac.destination);
+    playing = { key, gain, btn: bPlay }; bPlay.classList.add("on"); bPlay.textContent = "Stop music";
+    t0 = performance.now() / 1000 + 0.1; scheduleLoop(playing, ac.currentTime + 0.1);
+  };
+  (function frame() {
+    const t = SHOT ? +SHOT[2] : Math.max(0, performance.now() / 1000 - t0);
+    px = buf; buf.fill(0); draw(t);
+    for (let i = 0; i < W * H; i++) { const c = PAL[buf[i]]; img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255; }
+    ctx.putImageData(img, 0, 0); requestAnimationFrame(frame);
+  })();
+}
+</script>

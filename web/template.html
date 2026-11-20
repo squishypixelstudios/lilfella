@@ -1,0 +1,220 @@
+<title>Lil Fella v0.09</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the handheld on the left, a strip of test controls on the right; stacks on phones. */
+:root {
+  --bg: #d9dde0;
+  --panel: #eef0f1;
+  --line: #c3c8cc;
+  --fg: #23262a;
+  --dim: #5d646b;
+  --shell: #26292d;
+  --shell-hi: #3a3e44;
+  --accent: #6f8f7c;
+  --accent-ink: #f3f6f4;
+  --warn: #9a4b3c;
+  --font-display: "Silkscreen", "Courier New", monospace;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #15171a; --panel: #1f2226; --line: #33383e; --fg: #e4e7ea; --dim: #9aa2aa; --shell: #0b0c0e; --shell-hi: #2a2e33; --accent: #8fb4a0; --accent-ink: #10140f; --warn: #e08a76; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #15171a; --panel: #1f2226; --line: #33383e; --fg: #e4e7ea; --dim: #9aa2aa; --shell: #0b0c0e; --shell-hi: #2a2e33; --accent: #8fb4a0; --accent-ink: #10140f; --warn: #e08a76; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.45;
+  padding-block: 20px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 900px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 28px; justify-content: center; align-items: flex-start; }
+.dev { flex: 0 1 400px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+h1 { font-family: var(--font-display); font-weight: 400; font-size: 30px; letter-spacing: .04em; margin: 0; text-wrap: balance; }
+.sub { margin: 0; color: var(--dim); text-align: center; max-width: 36ch; }
+.shell { width: 100%; max-width: 400px; background: linear-gradient(160deg, var(--shell-hi), var(--shell) 55%); border-radius: 40px; padding: 16px; box-shadow: 0 1px 0 rgba(255,255,255,.08) inset, 0 18px 40px rgba(0,0,0,.28); }
+canvas { display: block; width: 100%; height: auto; max-width: 100%; aspect-ratio: 368 / 448; border-radius: 26px; image-rendering: pixelated; background: #000; touch-action: none; cursor: pointer; }
+canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.badge { font-family: var(--font-display); font-size: 11px; letter-spacing: .12em; color: #8a9097; text-align: center; margin-top: 10px; }
+.side { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.card h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 14px; letter-spacing: .06em; }
+.card p { margin: 0; color: var(--dim); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button, select { font: inherit; font-size: 14px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 7px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.danger { color: var(--warn); }
+.mono { font-family: var(--font-mono); font-size: 12.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+ul.how { margin: 0; padding-left: 18px; color: var(--dim); display: flex; flex-direction: column; gap: 4px; }
+ul.how b { color: var(--fg); font-weight: 700; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+  <section class="dev">
+    <h1>LIL FELLA <small style="font-size:.5em;opacity:.6">v0.09</small></h1>
+    <p class="sub">The firmware's game code, running in your browser. Click or tap the screen like the touchscreen.</p>
+    <div class="shell">
+      <canvas id="screen" width="368" height="448" tabindex="0" aria-label="Lil Fella screen"></canvas>
+      <div class="badge">ESP32-S3 · AMOLED 1.8</div>
+    </div>
+  </section>
+
+  <section class="side">
+    <div class="card">
+      <h2>How to play</h2>
+      <ul class="how">
+        <li><b>Icons</b>: feed, light (a switch), play, clean (top); medicine, meter, lock, attention (bottom).</li>
+        <li><b>Lock</b> (the padlock): keeps your Lil Fella just as they are. No growing up, no dying; they still need looking after. Tap it again to unlock.</li>
+        <li><b>Clean</b>: rub your finger back and forth over the mess to scrub it away.</li>
+        <li><b>Sick?</b> They get sick when they go hungry right down to empty, or when the light stays on through their night's sleep. One dose of medicine per sickness.</li>
+        <li><b>Tap the fella</b> to pet them, and tap found treasures to collect them.</li>
+        <li><b>Tap an empty spot</b> on the LCD to see the time.</li>
+        <li><b>Hold the LCD</b> for 1 second to open Settings (Old friends, Erase everything and more).</li>
+        <li>When the attention icon lights up, tap it to see why.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Time</h2>
+      <div class="row">
+        <span class="mono">Skip ahead</span>
+        <button data-ff="10">+10 min</button><button data-ff="60">+1 h</button><button data-ff="360">+6 h</button>
+      </div>
+      <div class="row">
+        <label class="mono" for="speed">Speed</label>
+        <select id="speed"><option value="1">1x</option><option value="60">60x</option><option value="600">600x</option></select>
+        <span class="mono" id="clock">--:--</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Jump to a stage</h2>
+      <p>Sets their age so you can see each drawing. Each new stage opens the evolution picker.</p>
+      <div class="row">
+        <button data-age="0">Squeeze</button><button data-age="2">Lil Blub</button><button data-age="25">Lil Blunkus</button><button data-age="73">Lil Fella</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Developer: try the games</h2>
+      <p>Starts a game right now on the current fella (needs a blob out of the dropper).</p>
+      <div class="row">
+        <button data-dbg="5">Move</button><button data-dbg="11">Run</button><button data-dbg="12">Orbit</button><button data-dbg="13">Pop</button><button data-dbg="14">Yeet</button><button data-dbg="2">Clean</button><button data-dbg="-1">Home</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Developer: hear the sounds</h2>
+      <p>Every sound in the game. Each press is a slightly different take, as in play.</p>
+      <div class="row" id="sndboard"></div>
+    </div>
+
+    <div class="card">
+      <h2>Device</h2>
+      <div class="row">
+        <button id="shake">Shake</button>
+        <button id="snd" class="on">Sound on</button>
+        <button id="reset" class="danger">Delete save</button>
+        <button id="resetYes" class="danger" hidden>Yes, delete</button>
+      </div>
+      <p class="mono" id="msg">Your fella is saved in this browser.</p>
+    </div>
+  </section>
+</main>
+
+<script>
+const WASM_B64 = "__WASM__";
+(async () => {
+  const bytes = Uint8Array.from(atob(WASM_B64), c => c.charCodeAt(0));
+  const { instance } = await WebAssembly.instantiate(bytes, { wasi_snapshot_preview1: {
+    fd_close: () => 0, fd_seek: () => 0, fd_write: () => 0, proc_exit: () => {}, environ_sizes_get: () => 0, environ_get: () => 0,
+  } });
+  const X = instance.exports;
+  if (X._initialize) X._initialize();
+  const mem = () => new Uint8Array(X.memory.buffer);
+  const KEY = 'lil-fella-save-v1';
+
+  // restore the save
+  try {
+    const s = localStorage.getItem(KEY);
+    if (s) { const b = Uint8Array.from(atob(s), c => c.charCodeAt(0)); mem().set(b, X.save_ptr()); X.save_set_len(b.length); }
+  } catch (e) {}
+  const now = new Date();
+  X.init((Math.random() * 4294967295) >>> 0, now.getFullYear(), now.getMonth() + 1, now.getDate(), now.getHours(), now.getMinutes(), now.getSeconds());
+
+  const cv = document.getElementById('screen');
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(368, 448);
+  let down = false, px = 0, py = 0, pressed = false;   // pressed: a press the game hasn't seen yet (quick clicks)
+  const pos = e => { const r = cv.getBoundingClientRect(); px = Math.round((e.clientX - r.left) / r.width * 368); py = Math.round((e.clientY - r.top) / r.height * 448); };
+  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); pos(e); down = true; pressed = true; audioOn(); });
+  cv.addEventListener('pointermove', e => { if (down) pos(e); });
+  const up = e => { pos(e); down = false; };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+
+  // sounds: the game core synthesises each one (the same code the device runs); a few takes of each are kept
+  let ac = null, sound = true, master = null;
+  const takes = {};
+  function audioOn() {
+    if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); master = ac.createDynamicsCompressor(); master.connect(ac.destination); } catch (e) {} }
+    if (ac && ac.state === 'suspended') ac.resume();
+  }
+  function take(id) {
+    const list = takes[id] || (takes[id] = []);
+    if (list.length < 3) {
+      const n = X.snd_render(id, 32000, (Math.random() * 0x7fffffff) | 1);
+      if (!n) return null;
+      const b = ac.createBuffer(1, n, 32000);
+      b.getChannelData(0).set(new Float32Array(X.memory.buffer, X.snd_buf(), n));
+      list.push(b);
+      return b;
+    }
+    return list[(Math.random() * list.length) | 0];
+  }
+  function play(code) {
+    if (!ac || !sound) return;
+    const id = code & 255, vol = (code >> 8) || 4;
+    const b = take(id); if (!b) return;
+    const src = ac.createBufferSource(), g = ac.createGain();
+    src.buffer = b; g.gain.value = [0, .06, .13, .25, .5, .9][vol > 5 ? 5 : vol];
+    src.connect(g); g.connect(master); src.start();
+  }
+
+  const t0 = performance.now();
+  const clockEl = document.getElementById('clock');
+  function frame() {
+    const ms = Math.floor(performance.now() - t0);
+    const r = X.tick(ms, (down || pressed) ? 1 : 0, px, py);
+    pressed = false;
+    if (X.display_on()) {
+      if (r) { img.data.set(new Uint8Array(X.memory.buffer, X.fb_ptr(), 368 * 448 * 4)); ctx.putImageData(img, 0, 0); }
+      cv.style.filter = 'brightness(' + Math.max(.25, X.brightness() / 255).toFixed(2) + ')';
+    } else { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 368, 448); }
+    let s; while ((s = X.snd_pop()) >= 0) play(s);
+    if (X.save_dirty()) {
+      try { const n = X.save_len(); const b = new Uint8Array(X.memory.buffer, X.save_ptr(), n); let str = ''; for (let i = 0; i < n; i++) str += String.fromCharCode(b[i]); localStorage.setItem(KEY, btoa(str)); } catch (e) {}
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  setInterval(() => { const d = new Date(); clockEl.textContent = 'Real time ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }, 1000);
+
+  document.querySelectorAll('[data-ff]').forEach(b => b.addEventListener('click', () => X.fast_forward(+b.dataset.ff)));
+  document.querySelectorAll('[data-age]').forEach(b => b.addEventListener('click', () => {
+    const h = +b.dataset.age;
+    if (h === 0) X.debug_act(8); else X.set_age_hours(h);
+  }));
+  { const names = 'Tap,Coo soft,Coo,Coo loud,Pet,Eat,Gift,Scoop,Blow,Boing,Win,Lose,Sad,Melt,Scratch,Yawn,Poof,Grumble,Key,Menu,Back,Page,Nope,Light on,Light off,Sick,Gulp,Medicine,Heart,Plop,Scrub,Bubble,Splat,Sparkle,Bounce,Stretch,Whoosh,Lock,Unlock,Level up,Title 1,Title 2,Title 3,Title 4,Title 5,Title 6,Title 7,Title 8'.split(','), board = document.getElementById('sndboard');
+    names.forEach((n, i) => { const b = document.createElement('button'); b.textContent = n; b.addEventListener('click', () => { audioOn(); const was = sound; sound = true; play(i | 3 << 8); sound = was; }); board.appendChild(b); }); }
+  document.querySelectorAll('[data-dbg]').forEach(b => b.addEventListener('click', () => X.debug_act(+b.dataset.dbg)));
+  document.getElementById('speed').addEventListener('change', e => X.timescale(+e.target.value));
+  document.getElementById('shake').addEventListener('click', () => {
+    let i = 0; const iv = setInterval(() => { const a = (i % 2 ? 1 : -1) * 2.2; X.set_imu(a, 1, -a * .6); if (++i > 14) { clearInterval(iv); X.set_imu(0, 1, 0); } }, 40);
+  });
+  const sndBtn = document.getElementById('snd');
+  sndBtn.addEventListener('click', () => { audioOn(); sound = !sound; sndBtn.classList.toggle('on', sound); sndBtn.textContent = sound ? 'Sound on' : 'Sound off'; });
+  const msg = document.getElementById('msg'), rs = document.getElementById('reset'), ry = document.getElementById('resetYes');
+  rs.addEventListener('click', () => { ry.hidden = !ry.hidden; msg.textContent = ry.hidden ? 'Your fella is saved in this browser.' : 'This removes your fella from this browser.'; });
+  ry.addEventListener('click', () => { try { localStorage.removeItem(KEY); } catch (e) {} msg.textContent = 'Save deleted. Reloading...'; setTimeout(() => location.reload(), 400); });
+})();
+</script>

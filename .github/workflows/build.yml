@@ -1,0 +1,25 @@
+# Builds the firmware for all three boards on GitHub and attaches one merged image each (flash at 0x0) as a downloadable artifact:
+#   lil-fella-amoled216-merged.bin  Waveshare ESP32-S3-Touch-AMOLED-2.16
+#   lil-fella-amoled18-merged.bin   Waveshare ESP32-S3-Touch-AMOLED-1.8
+#   lil-fella-lcd183-merged.bin     Waveshare ESP32-S3-Touch-LCD-1.83
+name: build-firmware
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install platformio esptool
+      - run: pio run -e amoled216 -e amoled18 -e lcd183
+      - name: Merge into one image per board
+        run: |
+          BA=$(find ~/.platformio/packages -name boot_app0.bin | head -1)
+          for E in amoled216 amoled18 lcd183; do
+            B=.pio/build/$E
+            python -m esptool --chip esp32s3 merge_bin -o lil-fella-$E-merged.bin --flash_mode qio --flash_size 16MB \
+              0x0 $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 $BA 0x10000 $B/firmware.bin
+          done
+      - uses: actions/upload-artifact@v4
+        with: { name: lil-fella-firmware, path: "lil-fella-*-merged.bin" }

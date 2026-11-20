@@ -1,0 +1,107 @@
+<title>Lil Fella Eating Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root {
+  --bg: #e9ebe2; --card: #f5f6ef; --fg: #232a22; --muted: #5d675c; --line: #cfd4c6; --accent: #3c6b4a; --chip: #dde3d2;
+  --lcd0: #c6c9be; --lcd1: #b4b8ac; --lcd2: #70746a; --lcd3: #1e211c;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #161a16; --card: #1f251f; --fg: #e3e8dc; --muted: #9aa597; --line: #313a30; --accent: #8fc79c; --chip: #2a332a; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #161a16; --card: #1f251f; --fg: #e3e8dc; --muted: #9aa597; --line: #313a30; --accent: #8fc79c; --chip: #2a332a; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 "Space Grotesk", system-ui, sans-serif; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1100px; margin: 0 auto; }
+h1 { font-size: clamp(26px, 5vw, 38px); line-height: 1.1; margin: 0 0 6px; letter-spacing: -0.02em; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 62ch; margin: 0 0 18px; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 20px; }
+.bar label { font: 500 12px/1 "IBM Plex Mono", ui-monospace, monospace; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { font: inherit; font-size: 13px; padding: 6px 12px; background: transparent; color: var(--fg); border: 0; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+:root[data-theme="dark"] .seg button[aria-pressed="true"] { color: #0d130d; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .seg button[aria-pressed="true"] { color: #0d130d; } }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.card header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.card h2 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+.chip { font: 500 11px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase; background: var(--chip); color: var(--muted); padding: 4px 7px; border-radius: 999px; white-space: nowrap; }
+canvas { width: 100%; height: auto; image-rendering: pixelated; border-radius: 8px; border: 1px solid var(--line); display: block; cursor: pointer; background: var(--lcd0); }
+.tag { font: 500 12px/1.2 "IBM Plex Mono", ui-monospace, monospace; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+.blurb { margin: 0; color: var(--muted); font-size: 13.5px; }
+h3 { font-size: 20px; margin: 34px 0 6px; letter-spacing: -0.01em; }
+.pitch { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; margin-top: 12px; }
+.p { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.p canvas { width: 54px; height: auto; border: 0; background: transparent; cursor: default; }
+.p b { display: block; font-size: 14px; } .p span { color: var(--muted); font-size: 13px; }
+.log { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; padding: 10px 14px; margin-bottom: 18px; font-size: 13.5px; color: var(--muted); } .log b { color: var(--fg); } .log span { color: var(--fg); font-weight: 600; }
+.new { font: 600 10px/1 "IBM Plex Mono", ui-monospace, monospace; background: var(--accent); color: #fff; padding: 3px 6px; border-radius: 4px; margin-left: 8px; letter-spacing: .06em; vertical-align: middle; font-style: normal; }
+.vtag { font: 500 11px/1 "IBM Plex Mono", ui-monospace, monospace; color: var(--muted); margin-left: auto; }
+.note { color: var(--muted); font-size: 13px; margin-top: 18px; }
+</style>
+<div class="wrap">
+  <h1>Lil Fella Eating Lab</h1>
+  <p class="lede">Previews of one-of-a-kind eating routines, drawn on the real 40×28 dot matrix with the game's real sprites. Nothing here is in the game build yet. Click a screen to replay it.</p>
+  <div class="bar">
+    <label>Food <span class="seg" id="foodSeg"><button data-v="meal" aria-pressed="true">Meal</button><button data-v="snack" aria-pressed="false">Snack</button></span></label>
+    <label>Speed <span class="seg" id="spdSeg"><button data-v="0.5" aria-pressed="false">½×</button><button data-v="1" aria-pressed="true">1×</button><button data-v="2" aria-pressed="false">2×</button></span></label>
+    <label>Palette <span class="seg" id="palSeg"><button data-v="lcd" aria-pressed="true">LCD</button><button data-v="night" aria-pressed="false">Night</button></span></label>
+  </div>
+  <div class="log" id="log"><b>Version 6</b> · <span>Mochi</span> has a new idea: the daifuku wrap · <span>Big Ballboi</span>: the pancake now sticks on at the bottom and you can watch it make one half-turn up the back of the ball to the top, where a hatch opens and it drops straight in. Cards that changed have a <em>NEW</em> badge.</div>
+  <div class="grid" id="grid"></div>
+  <h3>Round 2: the rest of the cast</h3>
+  <p class="lede" style="margin-bottom:0">First takes for everyone else. Tell me which to keep, change or swap. Lil Blob keeps the absorb animation he has now.</p>
+  <div class="grid" id="grid2" style="margin-top:14px"></div>
+  <p class="note">Each routine runs about 6–8 seconds. In the game they'd play instead of the current three-bite chomp, with the same sounds on the chomps and gulps.</p>
+</div>
+<script>
+const SP = __SPRITES__;
+SP.FORK = ['X.X.X', 'XXXXX', '..X..', '..X..', '..X..'];
+SP.KNIFE = ['.XX', '.XX', '.X.', '.X.', '.X.'];
+SP.BONE = ['.X.X.', 'XXXXX', '.X.X.'];
+SP.BALL_SM = ['..XXXXX..', '.XGG...X.', 'X.......X', 'X.X...X.X', 'X...X...X', 'X.......X', 'X..XXX..X', '.X.....X.', '..XXXXX..'];
+__ENGINE__
+const PALS = { lcd: ['#c6c9be', '#b4b8ac', '#70746a', '#1e211c'], night: ['#000000', '#1e201d', '#686c64', '#d6dacd'] };
+let pal = 'lcd', speed = 1;
+const SC = 8;
+function paint(cv, a, t) {
+  render(a, t);
+  const c = cv.getContext('2d'), P = PALS[pal];
+  c.fillStyle = P[0]; c.fillRect(0, 0, cv.width, cv.height);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let v = buf[y * W + x]; if (invert) v = v === 0 ? 3 : v === 3 ? 0 : v;
+    c.fillStyle = P[v === 0 ? 1 : v === 2 ? 2 : 3];
+    if (v === 0) { c.globalAlpha = 0.45; c.fillRect(x * SC + 2, y * SC + 2, SC - 4, SC - 4); c.globalAlpha = 1; }
+    else c.fillRect(x * SC + 1, y * SC + 1, SC - 2, SC - 2);
+  }
+}
+const cards = [];
+const grid = document.getElementById('grid'), grid2 = document.getElementById('grid2');
+for (const a of ANIMS) {
+  const el = document.createElement('section'); el.className = 'card';
+  el.innerHTML = '<header><h2></h2><span class="chip"></span></header><canvas width="' + W * SC + '" height="' + H * SC + '" aria-label=""></canvas><div class="tag"></div><p class="blurb"></p>';
+  el.querySelector('h2').textContent = a.name; if (a.fresh) { const n = document.createElement('i'); n.className = 'new'; n.textContent = 'NEW'; el.querySelector('h2').appendChild(n); } el.querySelector('.chip').textContent = a.stage;
+  el.querySelector('.tag').textContent = a.tag; el.querySelector('.blurb').textContent = a.blurb;
+  const cv = el.querySelector('canvas'); cv.setAttribute('aria-label', a.name + ' eating animation');
+  const st = { a, cv, t0: performance.now(), last: 0, tagEl: el.querySelector('.tag') };
+  cv.addEventListener('click', () => { st.t0 = performance.now(); restart(a); setTag(st); });
+  restart(a); setTag(st);
+  (a.group === 2 ? grid2 : grid).appendChild(el); cards.push(st);
+}
+function setTag(s) { if (s.a.random === 'marshy') s.tagEl.textContent = s.a.tag + ' · this feed: bounces off the ' + (MARSHY.v ? 'RIGHT' : 'LEFT') + ' wall'; }
+function loop(now) {
+  for (const s of cards) {
+    const T = s.a.dur + 1.2, t = ((now - s.t0) / 1000 * speed) % T;
+    if (t < s.last) { restart(s.a); setTag(s); }
+    s.last = t;
+    paint(s.cv, s.a, Math.min(t, s.a.dur));
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+function seg(id, fn) { const el = document.getElementById(id); el.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); fn(b.dataset.v); }); }
+seg('foodSeg', v => { FOODK.kind = v; cards.forEach(s => s.t0 = performance.now()); });
+seg('spdSeg', v => { speed = parseFloat(v); });
+seg('palSeg', v => { pal = v; });
+window.LAB = { ANIMS, render, MARSHY, buf, W, H, FOODK, get invert() { return invert; } };
+</script>
