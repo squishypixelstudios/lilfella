@@ -23,12 +23,15 @@ void setup() {
 static bool tapLatched = false;
 static int latchX = 0, latchY = 0;
 
-static void waitPollingTouch(uint32_t ms, bool wasDown) {
+// With the screen off a touch only has to wake it, so the controller is asked every 25 ms instead of every 8 ms:
+// a third of the I2C traffic while idle, and still far quicker than any tap.
+static void waitPollingTouch(uint32_t ms, bool wasDown, uint32_t every) {
   const uint32_t t0 = millis();
   while (millis() - t0 < ms) {
     int x, y;
     if (!wasDown && !tapLatched && hal::readTouch(x, y)) { tapLatched = true; latchX = x; latchY = y; }
-    delay(8);
+    const uint32_t left = ms - (millis() - t0);
+    delay(left < every ? (left ? left : 1) : every);
   }
 }
 
@@ -45,5 +48,5 @@ void loop() {
   hal::setBrightness(game.brightness());
   const uint32_t target = game.displayOn() ? 33 : 100;   // ~30 fps awake, 10 Hz while the screen is off
   const uint32_t el = millis() - t0;
-  if (el < target) waitPollingTouch(target - el, down);
+  if (el < target) waitPollingTouch(target - el, down, game.displayOn() ? 8 : 25);
 }

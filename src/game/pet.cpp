@@ -55,13 +55,13 @@ void Pet::newPet(uint32_t seed, int breed, const char* name) {
   memset(&d, 0, sizeof(d));
   strncpy(d.name, name, sizeof(d.name) - 1);
   d.breed = (uint8_t)breed;
-  d.hunger = 20; d.fun = 20; d.energy = 85; d.health = 100; d.chonk = 34; d.resent = 0;   // a new Lil Blob arrives hungry and bored: lots to do
+  d.hunger = 20; d.fun = 20; d.health = 100; d.chonk = 34; d.resent = 0;   // a new Lil Blob arrives hungry and bored: lots to do
   rng = seed * 2654435761u + 0x9E3779B9u;
   if (!rng) rng = 1;
   for (int i = 0; i < 5; i++) rnd();
   d.digestTimer = rndRange(90.0f, 180.0f);   // the first one comes within 3 minutes
   d.exploreTimer = rndRange(3 * HOUR, 6 * HOUR);
-  sleeping = false; napping = false; ended = false; sadAcc = 0;
+  sleeping = false; nap = 0; ended = false; sadAcc = 0;
   grump = 0; disturbCd = 0; lastWarn = 0;
   qh_ = qt_ = 0;
 }
@@ -116,11 +116,10 @@ float Pet::idealWeight() const {
 void Pet::clampAll() {
   d.hunger = clampf(d.hunger, 0, 100);
   d.fun = clampf(d.fun, 0, 100);
-  d.energy = clampf(d.energy, 0, 100);
   d.health = clampf(d.health, 0, 100);
   d.chonk = clampf(d.chonk, 3, 130);
   d.resent = clampf(d.resent, 0, 100);
-  if (d.droppings > 6) d.droppings = 6;
+  if (d.droppings > BOX_MAX) d.droppings = BOX_MAX;
   if (d.floorMess > 4) d.floorMess = 4;
   d.bubblesOnFloor = 0;
   for (int i = 0; i < 3; i++) if (d.sick[i] > SICK_MAX) d.sick[i] = SICK_MAX;
@@ -184,9 +183,8 @@ void Pet::petIt(float amt) {
   clampAll();
 }
 
-void Pet::exercise(float funGain, float energyCost, float chonkLoss) {
+void Pet::exercise(float funGain, float chonkLoss) {
   d.fun += funGain;
-  d.energy -= energyCost;
   d.chonk -= chonkLoss;
   d.resent -= funGain * 0.2f;
   clampAll();
@@ -226,29 +224,28 @@ void Pet::tick(float dt, const SimCtx& cx) {
   const bool away = cx.away;
   const float hr = dt / HOUR;
 
-  // ---- sleeping: when you put the device down (or they run out of energy) ----
-  if (d.energy < 12.0f) napping = true;
-  if (d.energy >= 50.0f) napping = false;
+  // ---- sleeping: at bedtime, and for the Lil Blob's test nap. (There's no energy: nothing wears them out, games
+  // are free, and they never nap from tiredness.) ----
+  if (nap > 0 && sleeping) nap -= dt * (cx.lightOff ? 1.4f : 1.0f);   // a nap in the dark is over sooner
   if (grump > 0) grump -= dt;
   if (disturbCd > 0) disturbCd -= dt;
-  // asleep at bedtime, when worn out, or for a short nap with the light off in the day
+  // asleep at bedtime, or for as long as a nap has left to run
   // (a newborn's first 30 minutes: bedtime doesn't count yet, so one made at night stays up to be looked after. Naps
   // still happen: the test nap that teaches the light comes inside those 30 minutes.)
   const bool night = cx.night && !cx.newborn;
-  const bool want = !d.exploring && (night || napping || (cx.lightOff && d.energy < 50.0f));
+  const bool want = !d.exploring && (night || nap > 0);
   if (!sleeping && want && grump <= 0) { sleeping = true; push(EV_SLEEP); }
   else if (sleeping && !want) { sleeping = false; push(EV_WAKE); }
 
   // ---- needs ----
-  float hungerRate, funRate, energyRate;
-  if (sleeping) { hungerRate = -2.5f; funRate = -1.5f; energyRate = 120.0f * sleepMul; }   // a night's sleep costs little
-  else { hungerRate = -14; funRate = -10; energyRate = -5; }
+  float hungerRate, funRate;
+  if (sleeping) { hungerRate = -2.5f; funRate = -1.5f; }   // a night's sleep costs little
+  else { hungerRate = -14; funRate = -10; }
   const float mul = away ? 0.35f : 0.75f;
   // awake, the young need you often; it eases off as they grow
   const float kH = sleeping ? 1.0f : drainScale(d.age, false), kF = sleeping ? 1.0f : drainScale(d.age, true);
   d.hunger += hungerRate * kH * mul * hr;
   d.fun += funRate * kF * mul * hr;
-  d.energy += energyRate * (energyRate > 0 ? 1.0f : mul) * hr;
 
   // ---- weight ----
   d.chonk -= hr * (sleeping ? 0.06f : 0.15f);
@@ -340,7 +337,7 @@ void Pet::tick(float dt, const SimCtx& cx) {
   d.health -= loss;
   const bool good = d.hunger >= 35 && d.fun >= 30 && d.floorMess == 0 && d.droppings < 3;
   if (good) {
-    d.resent -= 3.5f * hr;
+    d.resent -= 1.0f * hr;   // (slow: a few sloppy hours leave a mark that takes a while to fade)
     if (d.chonk < ideal + 30 && !sick) d.health += 5 * hr;   // good care keeps them well, but only medicine cures
   }
 

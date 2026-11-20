@@ -205,19 +205,38 @@ void Game::pageName(Frame& f) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Settings opens with a long press on the LCD: from the home screen (the dropper waiting for its push included), in
+// the middle of any animation (the fall from the dropper, the medicine, eating, growing) and during an ending.
+// An animation or ending is frozen meanwhile, and Back picks it up exactly where it stopped.
+void Game::openSettings() {
+  setFrom_ = scr; setFromT_ = scrT_;
+  squeezing_ = false;   // (an ending: the press that opened Settings is not a squeeze of the dropper)
+  sound(SND_MENU);
+  setPage_ = 0;
+  setScreen(S_SETTINGS);
+}
+
+void Game::leaveSettings() {
+  const Screen from = setFrom_;
+  setFrom_ = S_MAIN;
+  if (from == S_ENDING && !sv.hasBlob) { setScreen(S_ENDING); scrT_ = setFromT_; }
+  else if (from == S_ANIM && sv.hasBlob && an_ != AN_NONE && anT_ < anLen_) setScreen(S_ANIM);
+  else setScreen(sv.hasBlob ? S_MAIN : S_SETUP_NAME);
+}
+
 void Game::pageSettings(Frame& f) {
   // (Speed is a developer option: remove it, and A_SPEED, before the final version.)
   // three short pages with tall rows, so each one is easy to hit with a finger; the two that wipe things are on their own page
-  enum Act { A_SOUND, A_BRIGHT, A_SCREEN, A_AUTOOFF, A_MORE, A_FRIENDS, A_JOURNAL, A_CLOCK, A_TOUCH, A_SPEED, A_NEWBLOB, A_ERASE, A_BACK };
+  enum Act { A_SOUND, A_BRIGHT, A_SCREEN, A_AUTOOFF, A_MORE, A_FRIENDS, A_JOURNAL, A_CLOCK, A_TOUCH, A_SPEED, A_NEWBLOB, A_ERASE, A_ABOUT, A_BACK };
   static const Act page1[] = {A_SOUND, A_BRIGHT, A_SCREEN, A_AUTOOFF, A_MORE, A_BACK};
   static const Act page2[] = {A_FRIENDS, A_JOURNAL, A_CLOCK, A_SPEED, A_MORE, A_BACK};
-  static const Act page3[] = {A_NEWBLOB, A_ERASE, A_TOUCH, A_BACK};   // (Touch, the debug overlay, lives here)
+  static const Act page3[] = {A_NEWBLOB, A_ERASE, A_TOUCH, A_ABOUT, A_BACK};   // (Touch, the debug overlay, lives here; About is the last row)
   static const char* const vol[6] = {"0 OFF", "1", "2", "3", "4", "5 MAX"};
-  static const int speeds[4] = {1, 60, 600, 3600};
+  static const int speeds[3] = {1, 1000, 3000};
   if (setPage_ < 0 || setPage_ > 2) setPage_ = 0;
   const bool second = setPage_ > 0;
   const Act* acts = setPage_ == 2 ? page3 : setPage_ == 1 ? page2 : page1;
-  const int n = setPage_ == 2 ? 4 : 6;
+  const int n = setPage_ == 2 ? 5 : 6;
   char title[20]; snprintf(title, sizeof title, "SETTINGS %d/3", setPage_ + 1);
   f.textCenter(W / 2, 8, title, SH_INK);
   char ver[16]; snprintf(ver, sizeof ver, "v%s", LF_VERSION);
@@ -239,6 +258,7 @@ void Game::pageSettings(Frame& f) {
       case A_SPEED: lab = "Speed"; snprintf(val, sizeof val, "x%d", timeScale); break;
       case A_NEWBLOB: lab = "New blob"; break;
       case A_ERASE: lab = "Erase everything"; break;
+      case A_ABOUT: lab = "About"; break;
       case A_BACK: lab = "Back"; snprintf(val, sizeof val, "%s", second ? "<" : ""); break;
     }
     const int y = SETTINGS_Y0 + i * SETTINGS_STEP;
@@ -252,7 +272,7 @@ void Game::pageSettings(Frame& f) {
     if (!tapIn(16, y, W - 32, SETTINGS_ROW_H)) continue;
     sound(SND_TAP);
     switch (a) {
-      case A_SOUND: sv.volume = (uint8_t)((sv.volume + 1) % 6); sound(SND_COO_SOFT); break;
+      case A_SOUND: sv.volume = (uint8_t)((sv.volume + 5) % 6); sound(SND_COO_SOFT); break;   // each tap is one step quieter: 2, 1, 0 OFF, then round to 5 MAX
       case A_BRIGHT: sv.brightness = (uint8_t)(sv.brightness % 5 + 1); break;
       case A_SCREEN: sv.eq[0] = sv.eq[0] == 1 ? 0 : 1; break;
       case A_AUTOOFF: { static const uint8_t nxt[5] = {2, 0, 3, 4, 1}; sv.eq[2] = nxt[sv.eq[2] < 5 ? sv.eq[2] : 0]; break; }   // 5 Sec -> 15 -> 30 -> 1 Min -> Never
@@ -265,15 +285,30 @@ void Game::pageSettings(Frame& f) {
         clockNext_ = S_SETTINGS; setScreen(S_SETUP_CLOCK); return;
       }
       case A_TOUCH: showTouch = !showTouch; sv.eq[1] = showTouch ? 1 : 0; break;
-      case A_SPEED: { int k = 0; for (int j = 0; j < 4; j++) if (speeds[j] == timeScale) k = j; timeScale = speeds[(k + 1) % 4]; break; }
+      case A_SPEED: { int k = 0; for (int j = 0; j < 3; j++) if (speeds[j] == timeScale) k = j; timeScale = speeds[(k + 1) % 3]; break; }
       case A_NEWBLOB: confirm_ = CF_NEWBLOB; setScreen(S_CONFIRM); return;
       case A_ERASE: confirm_ = CF_ERASE; setScreen(S_CONFIRM); return;
+      case A_ABOUT: setScreen(S_ABOUT); return;
       case A_BACK:
         if (second) { setPage_--; return; }   // Back goes to the page before
-        autosave(true); setScreen(sv.hasBlob ? S_MAIN : S_SETUP_NAME); return;
+        autosave(true); leaveSettings(); return;
     }
     autosave(false);
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// About: who made it (Settings page 3)
+// ---------------------------------------------------------------------------------------------
+void Game::pageAbout(Frame& f) {
+  f.textCenter(W / 2, 8, "ABOUT", SH_INK);
+  f.textCenter(W / 2, 56, "Made by", SH_MID);
+  f.textCenter(W / 2, 72, "Squishy Pixel Studios", SH_INK);
+  f.textCenter(W / 2, 96, "squishypixelstudios.com", SH_MID);
+  f.textCenter(W / 2, 132, "Lil Fella", SH_FAINT);
+  char ver[16]; snprintf(ver, sizeof ver, "v%s", LF_VERSION);
+  f.textCenter(W / 2, 144, ver, SH_FAINT);
+  if (pageButton(f, 62, 196, 60, 26, "BACK")) setScreen(S_SETTINGS);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -429,7 +464,7 @@ void Game::eraseAll() {
   const uint32_t clock = sv.fallbackClock;
   saveDefaults(sv);
   sv.fallbackClock = clock;   // mode stays MODE_UNSET: a restart now also starts at the clock, like a new device
-  pet.ended = false; pet.sleeping = false; pet.napping = false; pet.sadAcc = 0;
+  pet.ended = false; pet.sleeping = false; pet.nap = 0; pet.sadAcc = 0;
   timeScale = 1; showTouch = false; setPage_ = 0; friendsPage_ = 0; journalSel_ = -1;
   pottyPending_ = 0; tutWant_ = -1;
   pickName();

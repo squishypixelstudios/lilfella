@@ -5,7 +5,7 @@ G=../src/game
 cd "$(dirname "$0")"
 $SDK/bin/clang++ --sysroot=$SDK/share/wasi-sysroot --target=wasm32-wasi -std=c++17 -Os -fno-exceptions -fno-rtti \
   -mexec-model=reactor -Wl,--no-entry -Wl,--gc-sections -Wl,--strip-all -w -o game.wasm web_main.cpp \
-  $G/lcd.cpp $G/sprites_data.cpp $G/breeds.cpp $G/pet.cpp $G/save.cpp $G/platform.cpp $G/motion.cpp $G/game.cpp $G/view.cpp $G/pages.cpp $G/eatfx.cpp $G/yeet.cpp $G/synth.cpp || exit 1
+  $G/lcd.cpp $G/sprites_data.cpp $G/breeds.cpp $G/pet.cpp $G/save.cpp $G/platform.cpp $G/game.cpp $G/view.cpp $G/pages.cpp $G/eatfx.cpp $G/yeet.cpp $G/pop.cpp $G/synth.cpp || exit 1
 python3 - <<'PY'
 import base64
 t=open('template.html').read()

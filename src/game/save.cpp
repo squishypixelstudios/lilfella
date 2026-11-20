@@ -20,6 +20,8 @@ void saveDefaults(SaveData& s) {
   s.mode = MODE_UNSET;
   s.volume = 2;   // quiet by default (0..5): the first-run clock screen was far too loud
   s.brightness = 4;
+  s.eq[2] = 3;              // Auto off: 30 Sec until the player changes it (see AUTO_OFF_MS)
+  s.fixes = FIX_AUTOOFF;    // (a fresh save needs no move to the new default: a later pick of 5 Sec must stick)
 }
 
 void saveSeal(SaveData& s) {

@@ -23,7 +23,6 @@ class EspPlatform : public lf::Platform {
   uint32_t millis() override;
   bool rtcGet(lf::DateTime& dt) override;
   void rtcSet(const lf::DateTime& dt) override;
-  bool imuRead(float& ax, float& ay, float& az) override;
   bool loadSave(void* buf, uint32_t len) override;
   bool storeSave(const void* buf, uint32_t len) override;
   void playSound(lf::Sound s, uint8_t volume) override;

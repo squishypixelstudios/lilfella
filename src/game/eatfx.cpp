@@ -231,15 +231,25 @@ void jelly(D t) {
 // PUDDLE: flows flat across the food, glugs it down in three gulps with bubbles, bunches into a dome, burps, slumps.
 void puddle(D t) {
   const D fcx = 29;
-  const int stage = t < 2.0 ? 0 : t < 2.6 ? 1 : t < 3.2 ? 2 : 3;
+  // The food never goes out of sight. It lies there whole until they flow over it; each dot of it goes soft a
+  // moment after their edge has passed it, then fades and is gone, every dot in its own time.
   if (t < 0.45) food(fcx, dropY(t, 0, 0.45, 23), 0);
+  else if (t < 3.6) {
+    const FDs F = FD(); const Spr s = sp(F.n[0]); const D fx0 = jr(fcx - F.w / 2);
+    const D edge = lerp(22, 38, ez(pr(t, 0.5, 1.7))), g = pr(t, 2.0, 3.5);
+    for (int r = 0; r < s.h; r++) for (int c = 0; c < s.w; c++) {
+      if (at(s, r, c) == '.') continue;
+      const D go = 0.1 + rnd(r * 5 + c * 11 + 40) * 0.72;   // when this dot starts to go
+      if (g >= go + 0.14) continue;
+      set(fx0 + c, 23 + r, g >= go ? 1 : edge >= fx0 + c + 1 + rnd(r * 9 + c + 1) * 3 ? 2 : 3);
+    }
+  }
   D left = 2, w = 20, h = 9; bool shut = false; const bool open = false;
   if (t < 0.5) {}
   else if (t < 1.7) { const D k = ez(pr(t, 0.5, 1.7)), k2 = ez(pr(t, 0.9, 1.7)); const D right = lerp(22, 38, k); left = jr(lerp(2, 14, k2)); w = jr(right - left); h = jr(lerp(9, 4, k)); }
   else if (t < 3.6) { left = 14; w = 24; h = 4 + jr(2 * mx(0, sin((t - 2.0) * 10.5) * (t > 2.0 && t < 3.3 ? 1 : 0))); shut = true; }
   else if (t < 4.5) { const D k = ez(pr(t, 3.6, 4.5)); w = jr(lerp(24, 14, k)); h = jr(lerp(4, 12, k)); left = jr(lerp(14, 20, k)); shut = true; }
   else { const D k = pr(t, 4.5, 5.6); const D e = exp(-3 * k) * cos(k * 14); w = jr(20 - 6 * e); h = jr(9 + 3 * e); left = 20 - jr((w - 14) / 3); shut = k < 0.6; }
-  if (t >= 1.5 && t < 3.6) food(fcx, 23, stage, PO().Mi(true));
   warp(open ? SPR_AD_PUDDLE_EAT : SPR_AD_PUDDLE, left, 28 - h, w, h, PO().S(shut));
   if (t >= 1.7 && t < 3.7) for (int i = 0; i < 3; i++) { const D k = md(t * 0.9 + i * 0.37, 1); bubble(jr(18 + i * 7 + sin(t * 5 + i) * 1.5), jr(22 - k * 9)); }
   if (t > 4.4 && t < 5.0) { const D k = pr(t, 4.4, 5.0); bubble(24, jr(14 - k * 8)); }
@@ -611,34 +621,48 @@ void bean(D t) {
   if (t > 5.6 && fl(t * 5) % 2 == 0) spark(x + 14, y0);
 }
 
-// BUN: a hot-dog bun. Splits open down the middle, the food flips into the gap, SQUISH shut, steamy chewing.
-void bun(D t) {
-  const D x = 8, y0 = 17, fcx = 32;
-  D g = 0;
-  if (t >= 0.7 && t < 1.3) g = ez(pr(t, 0.7, 1.3)) * 5;
-  else if (t >= 1.3 && t < 2.1) g = 5 + jr(sin(t * 9) * 0.5);
-  else if (t >= 2.1 && t < 2.3) g = lerp(5, -1, pr(t, 2.1, 2.3));
-  else if (t >= 2.3 && t < 2.45) g = -1;
-  g = jr(g);
-  const D chewk = (t - 2.6) / 0.6;
-  const bool chewing = t >= 2.6 && t < 4.4, chewOpen = chewing && md(chewk, 1) < 0.5;
-  const int st = t < 2.6 ? 0 : (int)mn(3, floor(chewk) + (md(chewk, 1) > 0.5 ? 1 : 0));
-  const D bob = chewing && md(chewk, 1) < 0.5 ? 1 : 0;
-  if (t < 0.4) food(fcx, dropY(t, 0, 0.4, 23), 0);
-  else if (t < 1.3) food(fcx, 23, 0);
-  else if (t < 2.1) { const D k = pr(t, 1.3, 2.1), cx = lerp(fcx, x + 7.5, ez(k)), cy = 23 - sin(k * PI) * 11 + k * 0; food(cx, jr(cy), 0, PO().Fl(k > 0.5)); }
-  else if (t < 2.3) food(x + 7.5, 22, 0);
-  else if (st < 3) food(x + 7.5, 21 + bob, st, PO().Mi(true));
-  const int name = chewOpen ? SPR_TN_BUN_EAT : SPR_TN_BUN;
-  const bool shut = t > 4.5 && t < 5.6; const D top = y0 + bob;
-  put(name, x - g, top, PO().C(0, 7).S(shut));
-  put(name, x + g, top, PO().C(7, 14).S(shut));
-  if (t >= 2.3 && t < 2.5) for (D sx : {x - 3, x + 17}) { set(sx, y0 + 4, 3); set(sx - sgn(sx - x), y0 + 6, 3); set(sx, y0 + 8, 3); }
-  for (int i = 0; i < 3; i++) {
-    const D t0 = 2.45 + i * 0.55; if (t < t0 || t > t0 + 1.3) continue;
-    const D k = pr(t, t0, t0 + 1.3); disc(jr(x + 7 + sin(k * 7 + i) * 2 + (i - 1) * 2), jr(y0 - 2 - k * 12), k < 0.6 ? 1 : 0, 2);
+// BUN: a bao bun, and it stuffs itself. The pinched top comes undone, it flips over onto the food (which goes in
+// through the top, as the filling), flips back, pinches itself shut again and steams: a puff with every chew.
+void baoBody(int id, D x, D y, D g, bool over, bool shut) {   // g: how far the pleats at the top are pulled apart; over: upside down
+  const Spr s = sp(id);
+  for (int r = 0; r < s.h; r++) for (int c = 0; c < s.w; c++) {
+    const char ch = at(s, r, c);
+    if (ch == '.' || (ch == 'E' && shut)) continue;
+    D dx = 0;
+    if (r < 3 && g > 0) { if (c == 7) continue; dx = c < 7 ? -g : g; }   // the knot is gone, the pleats lie open
+    set(x + c + dx, over ? y + s.h - 1 - r : y + r, 3);
   }
-  if (t > 5.5 && fl(t * 5) % 2 == 0) spark(x + 17, y0);
+}
+void bun(D t) {
+  const D x0 = 8, x1 = 21, x2 = 12, y0 = 17, fcx = x1 + 7;   // (x1: standing right over the food)
+  D g = 0;
+  if (t >= 0.6 && t < 1.0) g = jr(ez(pr(t, 0.6, 1.0)) * 3);
+  else if (t >= 1.0 && t < 3.1) g = 3;
+  else if (t >= 3.1 && t < 3.4) g = jr(lerp(3, 0, pr(t, 3.1, 3.4)));
+  D bx = x0, by = y0; bool over = false;
+  if (t >= 1.0 && t < 1.9) { const D k = pr(t, 1.0, 1.9); bx = jr(lerp(x0, x1, k)); by = jr(y0 - sin(k * PI) * 11); over = k > 0.5; }
+  else if (t >= 1.9 && t < 2.4) { bx = x1 + (t >= 2.1 ? fl(t * 12) % 2 : 0); over = true; }   // a wriggle: stuffing it in
+  else if (t >= 2.4 && t < 3.1) { const D k = pr(t, 2.4, 3.1); bx = jr(lerp(x1, x2, k)); by = jr(y0 - sin(k * PI) * 9); over = k < 0.5; }
+  else if (t >= 3.1) bx = x2;
+  const D chewk = (t - 3.4) / 0.6;
+  const bool chewing = t >= 3.4 && t < 5.2, puff = chewing && md(chewk, 1) < 0.5;
+  const int st = t < 3.4 ? 0 : (int)mn(3, floor(chewk) + (md(chewk, 1) > 0.5 ? 1 : 0));
+  // the food: on the floor, then the filling (seen through the dough)
+  if (t < 0.4) food(fcx, dropY(t, 0, 0.4, 23), 0);
+  else if (t < 2.4) food(fcx, 23, 0);
+  else if (t < 3.1) food(bx + 7.5, by + jr(lerp(6, 4, pr(t, 2.4, 3.1))), 0, PO().Mi(true));
+  else if (st < 3) food(bx + 7.5, by + 4, st, PO().Mi(true));
+  const bool shut = t >= 5.2 && t < 6.0;
+  if (puff) warp(SPR_TN_BUN_EAT, bx - 1, by - 1, 17, 12);   // swells with each chew
+  else baoBody(SPR_TN_BUN, bx, by, g, over, shut);
+  if (t >= 1.9 && t < 2.1) for (D sx : {bx - 2, bx + 16}) { set(sx, 26, 3); set(sx - sgn(sx - bx - 7), 24, 3); }   // whump
+  if (t >= 3.4 && t < 3.6) spark(bx + 6, by - 4);   // pinched shut
+  for (int i = 0; i < 3; i++) {   // steam out of the top
+    const D t0 = 3.45 + i * 0.6; if (t < t0 || t > t0 + 1.2) continue;
+    const D k = pr(t, t0, t0 + 1.2); disc(jr(bx + 7 + sin(k * 7 + i) * 2 + (i - 1) * 2), jr(by - 3 - k * 11), k < 0.6 ? 1 : 0, 2);
+  }
+  if (t >= 5.2 && t < 5.9) { const D k = pr(t, 5.2, 5.9); set(bx + 5, by - 2 - jr(k * 5), 2); set(bx + 9, by - 3 - jr(k * 5), 2); set(bx + 7, by - 4 - jr(k * 6), 3); }   // and a last little whistle of it
+  if (t > 5.8 && fl(t * 5) % 2 == 0) spark(bx + 17, by);
 }
 
 // SLOSH: a jar of liquid. Slurps the food up, level rises, sloshes, a drop spills; he hops over and slurps it too.
@@ -816,65 +840,93 @@ void blobbert(D t) {
   if (t > 6.2 && fl(t * 5) % 2 == 0) spark(jr(cx + 10), 13);
 }
 
-// MOCHI: a daifuku. Melts flat, slides under the food, folds up and over it, pinches a twist on top; the filling
-// sinks in; the twist pops undone.
-void flap(D px, D py, D a, D len, int v) {
-  for (D i = 0; i <= len; i++) {
-    const D x = px + cos(a) * i, y = py - sin(a) * i;
-    set(jr(x), jr(y), v);
-    set(jr(x - sin(a) * 1), jr(y - cos(a) * 1), v);
+// MOCHI: the daifuku wrap. Squashes into a low bun, slides under the food (it hops up onto their head), the sides
+// grow up round it and close over the top, a pinch and a twist; three gulps take the filling down and the dumpling
+// with it, and the twist pops undone into two ears. It is drawn with mochiShape / mochiFace, which at 13 x 8 with
+// ears of 2 are the sprite dot for dot, so the body
+// can squash, stretch and grow a pouch and still come back to exactly what it started as: no cuts, and the eyes only
+// ever move a dot at a time.
+void mochiShape(D l, D w, D top, D bot, D ear) {   // the outline: l..l+w-1, top..bot, ears "ear" dots tall (0: none)
+  l = jr(l); w = jr(w); top = jr(top); bot = jr(bot); ear = jr(ear);
+  const D r = l + w - 1, pl = l + 3, pr_ = r - 3;
+  for (D x = l + 2; x <= r - 2; x++) if (ear <= 0 || (fabs(x - pl) >= ear && fabs(x - pr_) >= ear)) set(x, top, 3);
+  if (ear > 0) for (D p : {pl, pr_}) for (D dx = -ear; dx <= ear; dx++) set(p + dx, top - (ear - fabs(dx)), 3);
+  set(l + 1, top + 1, 3); set(r - 1, top + 1, 3);
+  for (D y = top + 2; y <= bot - 2; y++) { set(l, y, 3); set(r, y, 3); }
+  set(l + 1, bot - 1, 3); set(r - 1, bot - 1, 3);
+  for (D x = l + 2; x <= r - 2; x++) set(x, bot, 3);
+}
+// the face: eyes on row ey (0 open, 1 shut and happy), cheeks and mouth on row cy
+void mochiFace(D fx, D ey, D cy, D l, D r, int eyes, D look = 0) {
+  fx = jr(fx); ey = jr(ey); cy = jr(cy); l = jr(l); r = jr(r);
+  for (D ex : {fx - 3 + look, fx + 3 + look}) {
+    if (eyes == 0) set(ex, ey, 3);
+    else { set(ex - 1, ey, 3); set(ex, ey - 1, 3); set(ex + 1, ey, 3); }
+  }
+  set(l + 2, cy, 3); set(l + 3, cy, 3); set(r - 3, cy, 3); set(r - 2, cy, 3);
+  set(fx, cy, 3); set(fx - 1, cy + 1, 3); set(fx + 1, cy + 1, 3);
+}
+void mochiRest(D l, D lift, int eyes, D ear) {   // as the sprite stands
+  mochiShape(l, 13, 20 - lift, 27 - lift, ear);
+  mochiFace(l + 6, 22 - lift, 24 - lift, l, l + 12, eyes);
+}
+
+void dumpling(D cx, D w, D top, D ry, D open) {   // flat on the floor, a domed top; open: the gap left in the dome (dots from the middle, each side)
+  const D rx = (w - 1) / 2, l = jr(cx - rx), r = jr(cx + rx), sy = jr(top + ry);
+  for (D y = sy; y <= 25; y++) { set(l, y, 3); set(r, y, 3); }
+  set(l + 1, 26, 3); set(r - 1, 26, 3);
+  for (D x = l + 2; x <= r - 2; x++) set(x, 27, 3);
+  D py = sy;
+  for (D x = l; x <= cx; x++) {   // the dome, a column at a time (and its mirror image, so the two sides match dot for dot)
+    const D nx = (cx - x) / rx, y = jr(sy - ry * sqrt(mx(0, 1 - nx * nx)));
+    if (cx - x < open) break;
+    for (D yy = py - 1; yy >= y; yy--) { set(x, yy, 3); set(l + r - x, yy, 3); }
+    if (y == py) { set(x, y, 3); set(l + r - x, y, 3); }
+    py = y;
   }
 }
 void mochi(D t) {
-  const FDs F = FD(); const D fcx0 = 30, cx = 20;
-  if (t < 0.4) food(fcx0, dropY(t, 0, 0.4, 23), 0);
-  auto eyes = [](D x0, D y0) { set(x0, y0, 3); set(x0 + 6, y0, 3); };
-  if (t < 0.6) { put(SPR_S0B_IDLE, 4, 18); food(fcx0, 23, 0); return; }
-  if (t < 1.8) {
-    D l, r;
-    if (t < 1.2) { const D k = ez(pr(t, 0.6, 1.2)); l = lerp(4, 2, k); r = lerp(16, 37, k); }
-    else { const D k = ez(pr(t, 1.3, 1.8)); l = lerp(2, cx - 7, k); r = lerp(37, cx + 7, k); }
-    const D h = t < 0.9 ? jr(lerp(10, 3, ez(pr(t, 0.6, 0.9)))) : 3;
-    if (h > 3) warp(SPR_S0B_IDLE, jr(l), 28 - h, jr(r - l) + 1, h);
-    else { for (D x = jr(l); x <= jr(r); x++) { set(x, 25, 3); set(x, 27, 3); } set(jr(l), 26, 3); set(jr(r), 26, 3); eyes(jr((l + r) / 2) - 3, 26); }
-    const bool under = r > fcx0 - F.w / 2;
-    const D fx = t < 1.3 ? fcx0 : lerp(fcx0, cx, ez(pr(t, 1.3, 1.8)));
-    food(fx, under ? 20 : 23, 0);
+  const D fcx = 27, x0 = 10;
+  if (t < 1.8) {   // squash, slide under
+    const D k = ez(pr(t, 0.5, 1.0)), s = ez(pr(t, 1.0, 1.7));
+    const D w = 13 + 2 * jr(2 * k), hb = 8 - jr(2 * k), ear = jr(2 * (1 - pr(t, 0.5, 0.85)));
+    const D cx = jr(lerp(x0, fcx, s)), l = cx - (w - 1) / 2, top = 28 - hb;
+    D fy = t < 0.4 ? dropY(t, 0, 0.4, 23) : 23;
+    if (t >= 1.25) { const D h = pr(t, 1.25, 1.65); fy = jr(lerp(23, 17, h) - sin(h * PI) * 3); }   // up it goes, onto their head
+    food(fcx, fy, 0);
+    mochiShape(l, w, top, 27, ear);
+    mochiFace(cx, top + 2, top + (hb >= 8 ? 4 : 3), l, l + w - 1, 0, t > 0.45 && t < 1.7 ? 1 : 0);
     return;
   }
-  if (t < 2.6) {
-    const D k = ez(pr(t, 1.85, 2.5)), len = 8;
-    for (D x = cx - 7; x <= cx + 7; x++) set(x, 27, 3);
-    set(cx - 7, 26, 3); set(cx + 7, 26, 3);
-    food(cx, 21, 0);
-    flap(cx - 7, 25, lerp(PI, PI / 3, k), len, 3);
-    flap(cx + 7, 25, lerp(0, PI * 2 / 3, k), len, 3);
-    eyes(cx - 3, 26);
+  const D cx = fcx;
+  if (t < 2.6) {   // the sides grow up and close over it
+    const D k1 = pr(t, 1.8, 2.15), k2 = ez(pr(t, 2.15, 2.6));
+    food(cx, 17, 0);
+    for (D x = cx - 7; x <= cx + 7; x++) set(x, 22, 3);   // (what it's sitting on)
+    if (k1 < 1) { const D up = jr(lerp(22, 17, k1)); for (D y = up; y <= 25; y++) { set(cx - 8, y, 3); set(cx + 8, y, 3); } set(cx - 7, 26, 3); set(cx + 7, 26, 3); for (D x = cx - 6; x <= cx + 6; x++) set(x, 27, 3); }
+    else dumpling(cx, 17, 12, 5, jr(8 * (1 - k2)));
+    mochiFace(cx, 24, 25, cx - 8, cx + 8, 0);
     return;
   }
-  D w = 15, h = 12, lift = 0; const bool shut = t >= 3.0 && t < 4.4;
-  if (t < 2.75) { w = 17; h = 10; }
-  else if (t < 4.4) { const D k = t - 2.75; w = 15 + jr(sin(k * 12) * 1.2 * exp(-k * 0.8)); h = 12 - jr(sin(k * 12) * 0.8 * exp(-k * 0.8)); }
-  const int st = t < 3.3 ? 0 : t < 3.8 ? 1 : t < 4.3 ? 2 : 3;
-  const D bx = jr(cx - w / 2), by = 28 - h;
-  ring(cx, by + 6, 0, 0);
-  for (D y = 0; y < h; y++) for (D x = 0; x < w; x++) {
-    const D nx = (x - (w - 1) / 2) / ((w - 1) / 2), ny = (y - (h - 1) / 2) / ((h - 1) / 2), d = nx * nx + ny * ny;
-    const D nx2 = (fabs(x - (w - 1) / 2) + 1) / ((w - 1) / 2), ny2 = (fabs(y - (h - 1) / 2) + 1) / ((h - 1) / 2);
-    if (d <= 1 && (nx2 * nx2 + ny * ny > 1 || nx * nx + ny2 * ny2 > 1)) set(bx + x, by + y, 3);
+  static const D gulps[3] = {3.0, 3.5, 4.0};
+  D G = 0; for (D g : gulps) G += ez(pr(t, g, g + 0.3));
+  const int st = stepIn(t, gulps, 3);
+  if (t < 4.4) {   // wrapped: a twist on top, and down it goes
+    const D f = G / 3, w = 13 + 2 * jr(2 * (1 - f)), top = jr(lerp(12, 20, f)), ey = jr(lerp(24, 22, f));
+    D sq = 0; for (D g : gulps) if (t >= g && t < g + 0.12) sq = 1;   // each gulp: a dot wider for a moment
+    if (st < 3) food(cx, 17 + (st ? 1 : 0), st, PO().Mi(true));
+    if (f < 1) dumpling(cx, w + 2 * sq, top, jr(lerp(5, 2, f)), 0); else mochiShape(cx - 6, 13, 20, 27, 0);
+    mochiFace(cx, ey, ey + (f > 0.8 ? 2 : 1), cx - (w - 1) / 2, cx + (w - 1) / 2, sq ? 1 : 0);
+    set(cx, top - 1, 3); set(cx - 1, top - 2, 3); set(cx + 1, top - 2, 3); if (t < 3.0) set(cx, top - 3, 3);   // the twist
+    if (t < 2.8) spark(cx + 3, 7);
+    return;
   }
-  if (st < 3) food(cx, by + 4, st, PO().Mi(true));
-  if (!shut) eyes(cx - 3, by + 4); else { set(cx - 4, by + 4, 3); set(cx - 2, by + 4, 3); set(cx + 2, by + 4, 3); set(cx + 4, by + 4, 3); }
-  set(cx, by + 7, 3);
-  if (t < 4.4) { set(cx, by - 1, 3); set(cx - 1, by - 2, 3); set(cx + 1, by - 2, 3); set(cx, by - 3, 3); }
-  if (t >= 4.4 && t < 4.8) { const D k = pr(t, 4.4, 4.8); set(cx - 1 - jr(k * 4), by - 2 - jr(k * 5), 3); set(cx + 1 + jr(k * 4), by - 2 - jr(k * 5), 3); }
-  if (t >= 4.4) {
-    memset(B, 0, EW * EH); INV = false;
-    lift = t < 4.7 ? hop(pr(t, 4.4, 4.7), 1, 3) : 0;
-    put(SPR_S0B_IDLE, cx - 6, 18 - lift, PO().S(t > 5.0 && t < 5.6));
-    if (t < 4.8) { const D k = pr(t, 4.4, 4.8); set(cx - 3 - jr(k * 4), 15 - jr(k * 5), 3); set(cx + 3 + jr(k * 4), 15 - jr(k * 5), 3); }
-    if (t > 5.0 && fl(t * 5) % 2 == 0) spark(cx + 8, 15);
-  }
+  // the twist pops undone: two ears
+  const D k = pr(t, 4.4, 4.8), ear = t < 4.8 ? jr(lerp(0, 2, k) + sin(k * PI) * 1.6) : 2;
+  const D lift = t >= 4.9 && t < 5.3 ? hop(pr(t, 4.9, 5.3), 1, 2) : 0;
+  mochiRest(cx - 6, lift, t >= 4.9 && t < 5.6 ? 1 : 0, ear);
+  if (t < 4.8) { set(cx - 2 - jr(k * 5), 17 - jr(k * 6), 2); set(cx + 2 + jr(k * 5), 17 - jr(k * 6), 2); }
+  if (t > 5.0 && fl(t * 5) % 2 == 0) spark(cx + 8, 15);
 }
 
 // CHEEKS: chipmunk nibbling, cheeks swell till he floats off the ground; GULP and down he drops.
@@ -921,21 +973,33 @@ void bigBlobbert(D t) {
   if (t >= 5.0) { h = 22; w = 36; }
   if (t >= 5.0 && t < 5.5) shake = fl(t * 20) % 2 ? 1 : -1;
   const D top = 28 - h;
-  if (t >= 0.3 && t < 1.0) { fy = dropY(t, 0.3, 0.6, 21 - 4); hasF = true; }
-  if (t >= 0.6 && t < 1.0) fy = 28 - 21 - 4;
+  if (t >= 0.2 && t < 1.0) { fy = dropY(t, 0.2, 0.4, 28 - 21 - 4); hasF = true; }   // falls onto the top of his head, and rests there
   if (t >= 1.0 && t < 1.6) { const D k = pr(t, 1.0, 1.6); fy = jr(lerp(3, 28 - 24 - 4, k) - sin(k * PI) * 9); hasF = true; }
   if (t >= 1.6 && t < 3.8) { const D k = pr(t, 1.7, 3.8); fy = jr(lerp(top - 4, 18, k)); mid = fy > top - 1; st = t < 2.7 ? 0 : t < 3.3 ? 1 : 2; hasF = true; }
   if (hasF) ey = mx(-2, mn(2, jr((fy - 9) / 4)));
   if (t < 0.3) ey = -2;
   if (t >= 5.6) shut = true;
   const D bx = jr(cx + 0.5 - w / 2);
-  warp(SPR_BB_BLOBBERT, bx, top, w, h, PO().S(true));
+  if (hasF && mid) food(cx, fy, st, PO().Mi(true));   // once it is inside him it is drawn first, so his outline is never broken by it
+  // His body, squashed to w x h. Not warp(): shrinking, that picks one sprite dot for each dot on the screen and drops
+  // the others, which left gaps in the outline wherever it steps. Here every dot of the outline is put where it
+  // lands, so a line that is joined up in the sprite is joined up on the screen. (Stretched bigger than the sprite it
+  // is the other way about, so then warp()'s dots are drawn as well.) The glare is sampled as before.
+  {
+    const Spr s = sp(SPR_BB_BLOBBERT); const D ww = mx(1, jr(w)), hh = mx(1, jr(h));
+    for (D dy = 0; dy < hh; dy++) for (D dx = 0; dx < ww; dx++) {
+      const char ch = at(s, (int)(hh > 1 ? jr(dy * (s.h - 1) / (hh - 1)) : 0), (int)(ww > 1 ? jr(dx * (s.w - 1) / (ww - 1)) : 0));
+      if (ch == 'G' || (ch == 'X' && (ww > s.w || hh > s.h))) set(bx + dx, top + dy, ch == 'G' ? 2 : 3);
+    }
+    for (int r = 0; r < s.h; r++) for (int c = 0; c < s.w; c++) if (at(s, r, c) == 'X')
+      set(bx + jr(c * (ww - 1) / (s.w - 1)), top + jr(r * (hh - 1) / (s.h - 1)), 3);
+  }
   const D eyy = top + jr(10 * (h - 1) / 24);
   for (D ex : {bx + jr(11 * (w - 1) / 35), bx + jr(24 * (w - 1) / 35)}) {
     if (shut) { set(ex - 1, eyy + 2, 3); set(ex, eyy + 1, 3); set(ex + 1, eyy + 2, 3); }
     else for (int i = 0; i < 3; i++) set(ex, eyy + i + ey, 3);
   }
-  if (hasF) food(cx, fy, st, PO().Mi(mid));
+  if (hasF && !mid) food(cx, fy, st);
   if (t >= 1.0 && t < 1.2) { spark(bx + 4, top - 2); spark(bx + w - 9, top - 2); }
   if (t >= 5.0 && t < 6.4) { const D k = pr(t, 5.0, 6.4); const D by = jr(top - 2 - k * 10); if (by > -3) put(SPR_BUBBLE, cx - 1 + jr(sin(k * 8)), by); }
   if (t > 6.0 && fl(t * 5) % 2 == 0) spark(bx + w - 7, top + 1);
@@ -972,10 +1036,22 @@ void bigBallboi(D t) {
   const D ang = dR / R * M - dL / R * M2;
   const bool moving = (t >= 0.5 && t < 1.6) || (t >= 2.0 && t < 3.5);
   if (moving) { lean = t < 1.6 ? 1 : -1; bob = fl(t * 10) % 2 ? -1 : 0; }
-  const D squashAt = 1.45, peel = 3.75;
+  const D peel = 3.75;
   if (t < 0.4) food(fcx, dropY(t, 0, 0.4, 23), 0);
-  else if (t < squashAt) food(fcx, 23, 0);
-  else if (t < 1.6) { const D k = pr(t, squashAt, 1.6); warp(F.n[0], fcx - 4, jr(lerp(23, 26, k)), F.w, mx(1, jr(lerp(F.h, 1, k)))); }
+  else if (t < 1.6) {   // squished as the ball rolls over it: every column of it is pressed into what room there is under the ball there
+    const Spr s = sp(F.n[0]); const D fx0 = jr(fcx - F.w / 2);
+    for (int c = 0; c < s.w; c++) {
+      const D dx = fx0 + c - jr(cx), in2 = (R - 1) * (R - 1) - dx * dx;
+      const D room = in2 > 0 ? 27 - (cy + sqrt(in2)) : s.h;          // dots between the floor and the ball, in this column
+      const int hh = (int)mx(1, mn(s.h, floor(room + 0.5)));
+      for (int j = 0; j < hh; j++) {
+        bool on = false;   // (pressed flat, a column keeps a dot if it had any)
+        if (hh == 1) { for (int r = 0; r < s.h; r++) if (at(s, r, c) != '.') on = true; }
+        else on = at(s, (int)jr(j * (s.h - 1.0) / (hh - 1)), c) != '.';
+        if (on) set(fx0 + c, 27 - hh + 1 + j, 3);
+      }
+    }
+  }
   const bool hasPan = t >= 1.6 && t < peel; const D pan = PI / 2 + (ang - angMax);
   bigShell(jr(cx), cy, ang, t >= 3.6 && t < peel + 0.5, -PI / 2);
   if (hasPan) {
@@ -1060,12 +1136,12 @@ const Entry TABLE[R_COUNT] = {
   {fubz, 7.0f, {0.4f, 1.2f, 2.0f, 4.1f}, 4},
   {dapper, 7.2f, {3.4f, 4.6f}, 2},
   {bean, 6.4f, {1.85f, 2.3f, 3.05f, 3.9f, 4.85f}, 5},
-  {bun, 6.2f, {2.3f, 2.9f, 3.5f, 4.1f}, 4},
+  {bun, 6.4f, {1.9f, 3.4f, 4.0f, 4.6f}, 4},
   {slosh, 6.8f, {1.5f, 2.0f, 2.5f, 4.75f}, 4},
   {mallow, 6.6f, {2.4f, 3.1f, 3.8f}, 3},
   {spiky, 6.4f, {1.4f, 1.8f, 2.2f, 5.0f}, 4},
   {blobbert, 6.8f, {1.2f, 2.6f, 4.6f, 5.0f}, 4},
-  {mochi, 5.8f, {2.6f, 3.3f, 3.8f, 4.4f}, 4},
+  {mochi, 5.8f, {2.6f, 3.0f, 3.5f, 4.0f}, 4},
   {cheeks, 6.2f, {1.6f, 2.2f, 2.8f, 4.2f}, 4},
   {bigBlobbert, 6.8f, {1.0f, 2.7f, 3.3f, 5.0f}, 4},
   {bigBallboi, 7.0f, {1.45f, 4.05f, 4.6f, 5.0f, 5.4f}, 5},
@@ -1080,7 +1156,7 @@ bool render(int routine, double t, bool meal, int variant, uint8_t* buf) {
   B = buf; MEAL = meal; MV = variant; INV = false;
   memset(B, 0, EW * EH);
   if (routine > R_NONE && routine < R_COUNT) {
-    const D d = TABLE[routine].dur;
+    const D d = duration(routine);
     TABLE[routine].fn(t < d ? t : d);
   }
   return INV;

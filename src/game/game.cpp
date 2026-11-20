@@ -10,7 +10,7 @@ namespace lf {
 // Packed save fields (the SaveData layout never changes, so an existing fella carries over):
 //   sv.eq[0]          screen palette: 0 classic LCD, 1 night (inverted)
 //   sv.eq[1]          touch debug overlay on/off
-//   sv.eq[2]          auto off when laid flat and untouched: 0 after 5 s (default), 2 after 15 s, 3 after 30 s, 4 after 1 min, 1 never
+//   sv.eq[2]          auto off when untouched: 0 after 5 s, 2 after 15 s, 3 after 30 s (default), 4 after 1 min, 1 never
 //   pet.d.pad0[0]     the looks the player picked: bits0-1 child, bits2-4 teen, bits5-7 adult (0 = not picked, else index+1 in
 //                     the list the path so far allows, see the evolution tree below)
 //   pet.d.pad0[1]     LOCK (1 = locked; it was the training bar until v0.08)
@@ -180,6 +180,9 @@ void Game::begin() {
     sv.fixes |= FIX_SICK;
   }
   if (!(sv.fixes & FIX_LOCK)) { pet.d.pad0[1] = 0; sv.fixes |= FIX_LOCK; }   // (what was the training bar: start unlocked)
+  // v1.0.1 upgrade: Auto off is a plain timer now, and its default is 30 Sec. A save still on the old default
+  // (5 Sec, which only applied laid flat) moves to 30 Sec once; after that whatever the player picks is kept.
+  if (!(sv.fixes & FIX_AUTOOFF)) { if (sv.eq[2] == 0) sv.eq[2] = 3; sv.fixes |= FIX_AUTOOFF; }
   lastForm_ = form();
   if (sv.hasBlob && form() == F_BABY && pet.d.age < DROP_AGE + SQUEEZE_SECS + NEWBORN_AWAKE)   // restarted in the first minutes
     newbornT_ = DROP_AGE + SQUEEZE_SECS + NEWBORN_AWAKE - pet.d.age;
@@ -232,6 +235,7 @@ void Game::newPet() {
   sv.lifeBlobs++;
   blobX_ = blobTx_ = 14;
   neglectT_ = 0;
+  memset(&sc_, 0, sizeof sc_);   // (no half-done scrub carried over from the last fella)
   lastForm_ = F_DROPPER;
   sv.lastSeen = epoch;
   autosave(true);
@@ -259,7 +263,7 @@ void Game::endLife(int ending) {
   logFriend(ending);
   sv.hasBlob = 0;
   pet.d.exploring = 0;
-  anArg_ = ending; suckAt_ = -1; squeezing_ = false; endPulls_ = 0; pullAt_ = -1; endShakes_ = 0; shakeFlash_ = 0; dispAt_ = -1;
+  anArg_ = ending; suckAt_ = -1; squeezing_ = false; endPulls_ = 0; pullAt_ = -1;
   sound(ending == END_RECYCLED ? SND_WIN : SND_SAD);   // the caption; the melt has its own sound (screenEnding)
   stayAwake();
   setScreen(S_ENDING);
@@ -370,7 +374,7 @@ void Game::lessonTick() {
   // set the scene so the icon really does something
   switch (want) {
     case IC_FEED: if (pet.d.hunger > 10) pet.d.hunger = 10; break;
-    case IC_PLAY: if (pet.d.fun > 10) pet.d.fun = 10; if (pet.d.energy < 30) pet.d.energy = 30; break;
+    case IC_PLAY: if (pet.d.fun > 10) pet.d.fun = 10; break;
     case IC_LITTER: if (!pet.d.droppings && !pet.d.floorMess) return; break;   // waits for a real poop
     default: break;
   }
@@ -422,9 +426,9 @@ void Game::scheduledTick() {
     d.sleepyMin = (uint16_t)(a / 60.0f + 2);
   if (!(d.pad2 & 0x2000) && a >= d.sleepyMin * 60.0f && awake) {
     d.pad2 |= 0x2000;
-    d.energy = 4; pet.napping = true;
+    pet.nap = TEST_NAP_SECS;
     sound(SND_YAWN);
-  } else if (needLight && (d.pad2 & 0x2000) && awake && !pet.napping && a >= d.sleepyMin * 60.0f + 60.0f) {
+  } else if (needLight && (d.pad2 & 0x2000) && awake && pet.nap <= 0 && a >= d.sleepyMin * 60.0f + 60.0f) {
     d.pad2 &= (uint16_t)~0x2000u;
     d.sleepyMin = (uint16_t)(a / 60.0f + 3);
   }
@@ -433,8 +437,6 @@ void Game::scheduledTick() {
 // Runs once per game second (so debug fast-forward works).
 void Game::careTick(float s) {
   if (!sv.hasBlob || form() == F_DROPPER) return;
-  pet.sleepMul = (pet.sleeping && lightOff()) ? 1.4f : 1.0f;   // lights off = better sleep
-  // (a daytime lights-off nap ends once they're rested enough: waking up turns the light back on, see EV_WAKE)
   lessonTick();
   scheduledTick();
   // a call left alone for 15 minutes counts as a care mistake (once per call)
@@ -460,9 +462,11 @@ void Game::careTick(float s) {
 // where the finger went down. Holding still for TOUCH_LONG_MS is a long press (fires once).
 void Game::updateInput(bool down, int x, int y) {
   in.pressed = in.released = in.tap = in.longPress = false;
-  if (down && !in.down) { in.pressed = true; in.px = x; in.py = y; in.downMs = nowMs; in.longDone = false; in.maxMove = 0; }
+  if (down && !in.down) { in.pressed = true; in.px = x; in.py = y; in.downMs = nowMs; in.longDone = false; in.maxMove = 0; in.sumX = in.sumY = 0; in.nSamp = 0; }
   if (down) {
     in.x = x; in.y = y; in.heldMs = (int)(nowMs - in.downMs);
+    in.sumX += x; in.sumY += y; in.nSamp++;
+    in.ax = (int)(in.sumX / in.nSamp); in.ay = (int)(in.sumY / in.nSamp);
     const int mv = abs(x - in.px) > abs(y - in.py) ? abs(x - in.px) : abs(y - in.py);
     if (mv > in.maxMove) in.maxMove = mv;   // the whole path counts: a scrub that comes back to the start is not a tap
   }
@@ -484,32 +488,18 @@ void Game::updateClock() {
   minute = n.minute;
 }
 
-void Game::updateMotion() {
-  imuT_ += dt;
-  if (imuT_ < 0.03f) return;
-  imuT_ = 0;
-  float ax, ay, az;
-  if (!plat->imuRead(ax, ay, az)) return;
-  motion_.feed(ax, ay, az, nowMs);
-  bool sh = motion_.shake();
-  bool pk = motion_.pickup();
-  if (sh && scr == S_ENDING && suckAt_ >= 0 && scrT_ - suckAt_ >= ENDING_UP_AT) { endShakes_++; shakeFlash_ = 0.5f; sound(SND_SCRATCH); }   // shaking the dropper clean (see screenEnding)
-  if (!(sh || pk) || !sv.hasBlob) return;
-  // Moving the device never turns the screen on: only a tap or the button does (wake()).
-  bool usingScreen = screenOn_ && idleSec < 2.0f;
-  if (pet.sleeping && !usingScreen && pet.napping) pet.disturb();   // shaking a fella napping from tiredness wakes them, grumpy
-}
-
 void Game::backHomeForSleep() {
   if (!sv.hasBlob) return;
-  if (scr == S_MENU || scr == S_METER || scr == S_DODGE || scr == S_RUN || scr == S_ORBIT || scr == S_LITTER || scr == S_YEET || scr == S_SCRUB || scr == S_LOCK || scr == S_SETTINGS || scr == S_CONFIRM) setScreen(S_MAIN);
+  if (scr == S_MENU || scr == S_METER || scr == S_DODGE || scr == S_RUN || scr == S_ORBIT || scr == S_POP || scr == S_YEET || scr == S_SCRUB || scr == S_LOCK || scr == S_SETTINGS || scr == S_CONFIRM) setScreen(S_MAIN);
 }
 
 void Game::updatePower() {
-  // laid down flat and left alone for a few seconds: the screen goes off (unless Settings says never).
-  // Not during setup, a game or the look picker; a tap or the button turns it on again (picking it up doesn't).
+  // left untouched for a few seconds: the screen goes off (unless Settings says never). The motion sensor is not
+  // used any more (it is switched off, see hal), so this no longer waits for the device to be laid flat.
+  // Not during setup, a game or the look picker; a tap or the button turns it on again.
   const uint32_t offMs = autoOffMs();
-  if (screenOn_ && offMs && !in.down && idleSec * 1000 >= offMs && motion_.flatFor(nowMs) >= offMs &&
+  if (screenOn_ && scr == S_ANIM) idleSec = 0;   // an animation counts as something happening: it is never cut off part-way
+  if (screenOn_ && offMs && plat->idleAutoOff() && !in.down && idleSec * 1000 >= offMs &&
       (scr == S_MAIN || scr == S_MENU || scr == S_METER || (scr == S_ANIM && an_ != AN_MEDS))) {
     backHomeForSleep();
     screenOn_ = false;
@@ -518,7 +508,7 @@ void Game::updatePower() {
   uint8_t base = kLevels[(sv.brightness < 1 ? 1 : (sv.brightness > 5 ? 5 : sv.brightness)) - 1];
   const bool setup = scr == S_SETUP_CLOCK || scr == S_SETUP_NAME || scr == S_TITLE || scr == S_ENDING;
   // games keep the screen bright while they're played (an untouched game goes home after GAME_IDLE_SECS)
-  bool keepOn = setup || scr == S_DODGE || scr == S_RUN || scr == S_ORBIT || scr == S_EVOLVE || scr == S_YEET || scr == S_LITTER || scr == S_SCRUB;
+  bool keepOn = setup || scr == S_DODGE || scr == S_RUN || scr == S_ORBIT || scr == S_EVOLVE || scr == S_YEET || scr == S_POP || scr == S_SCRUB;
   if (keepOn && !setup && idleSec > 300.0f) keepOn = false;   // (the picker)
   if (!keepOn && idleSec > 180.0f && offMs) {   // untouched for 3 minutes: off (unless Auto off is Never; it stays dimmed)
     if (screenOn_) backHomeForSleep();
@@ -671,14 +661,13 @@ bool Game::frame(Frame& f, bool touchDown, int physX, int physY) {
   if (in.down || in.released) wake();
   // a game left untouched: after GAME_IDLE_SECS it's put away (and the screen can rest)
   {
-    const bool game = scr == S_DODGE || scr == S_RUN || scr == S_ORBIT || scr == S_LITTER || scr == S_YEET || scr == S_SCRUB;
+    const bool game = scr == S_DODGE || scr == S_RUN || scr == S_ORBIT || scr == S_POP || scr == S_YEET || scr == S_SCRUB;
     if (!game || in.down || scr != gameScr_) gameIdle_ = 0;
     else if ((gameIdle_ += dt) >= GAME_IDLE_SECS) { gameIdle_ = 0; setScreen(S_MAIN); }
     gameScr_ = scr;
   }
 
   updateSim();
-  updateMotion();
   handleEvents();
   checkGrowth();
   if (pottyPending_) {
@@ -695,8 +684,14 @@ bool Game::frame(Frame& f, bool touchDown, int physX, int physY) {
   }
   dirty_ = true;
 
+  // a long press on the LCD opens Settings in the middle of an animation or an ending too (the home screen's own
+  // long press is in mainInput); see openSettings
+  if ((scr == S_ANIM || scr == S_ENDING) && in.longPress) { int dx, dy; if (inMatrix(in.px, in.py, dx, dy)) openSettings(); }
+
   const bool lcdScreen = scr >= S_MAIN && scr <= S_ENDING;
   if (lcdScreen) {
+    const bool popView = scr == S_POP;   // POP has the whole screen: a taller LCD, no icons, a BACK button
+    m_.h = popView ? POP_MH : MH; m_.y0 = popView ? POP_MY : MY;
     m_.clear();
     switch (scr) {
       case S_MAIN: drawMain(true); break;
@@ -707,7 +702,7 @@ bool Game::frame(Frame& f, bool touchDown, int physX, int physY) {
       case S_RUN: screenRun(); break;
       case S_ORBIT: screenOrbit(); break;
       case S_EVOLVE: screenEvolve(); break;
-      case S_LITTER: screenLitter(); break;
+      case S_POP: screenPop(); break;
       case S_YEET: screenYeet(); break;
       case S_SCRUB: screenScrub(); break;
       case S_LOCK: screenLock(); break;
@@ -715,10 +710,12 @@ bool Game::frame(Frame& f, bool touchDown, int physX, int physY) {
       default: break;
     }
     f.clear(SH_BG);
-    drawIcons(f);
+    const bool tall = popView && scr == S_POP;   // (not on the frame it is left on: that one is the ordinary screen again)
+    if (!tall) { m_.h = MH; m_.y0 = MY; }
+    if (tall) drawPopBack(f); else drawIcons(f);
     const bool dark = lightOff() && sv.hasBlob && (scr == S_MAIN || scr == S_ANIM);
     m_.render(f, dark ? SH_MID : SH_FAINT, dark ? SH_MID : SH_BG);
-    f.roundFrame(MX - 4, MY - 4, MW * DOT + 7, MH * DOT + 7, SH_FAINT);
+    f.roundFrame(MX - 4, m_.y0 - 4, MW * DOT + 7, m_.h * DOT + 7, SH_FAINT);
   } else {
     f.clear(SH_BG);
     switch (scr) {
@@ -729,6 +726,7 @@ bool Game::frame(Frame& f, bool touchDown, int physX, int physY) {
       case S_CONFIRM: pageConfirm(f); break;
       case S_FRIENDS: pageFriends(f); break;
       case S_JOURNAL: pageJournal(f); break;
+      case S_ABOUT: pageAbout(f); break;
       default: scr = S_MAIN; break;
     }
   }

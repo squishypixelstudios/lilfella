@@ -42,13 +42,20 @@ static void audioTask(void*) {
     Msg m;
     bool any = false;
     for (auto& p : voice) if (!p.v.done()) any = true;
-    TickType_t wait = (any || quietBlocks < 20) ? 0 : pdMS_TO_TICKS(25);
+    // Nothing playing and the tail has run out: amp off, then sleep until the next sound is queued (no polling,
+    // so a silent game costs the audio task nothing).
+    const bool idle = !any && quietBlocks >= 20;
+    if (idle && paOn) { digitalWrite(PA_PIN, LOW); paOn = false; }
+    TickType_t wait = idle ? portMAX_DELAY : 0;
     while (xQueueReceive(q, &m, wait) == pdTRUE) {
       wait = 0;
       if (m.snd < lf::SND_COUNT) {
         int pick = 0;
         for (int i = 0; i < VOICES; i++) { if (voice[i].v.done()) { pick = i; break; } if (voice[i].born < voice[pick].born) pick = i; }
-        static const float g[6] = {0.0f, 0.05f, 0.11f, 0.22f, 0.45f, 0.85f};   // settings 0..5; 2 (the default) = 25% of the old MID
+        // settings 0..5: every step is half of what it was up to v0.09 (0.05, 0.11, 0.22, 0.45, 0.85), which was too
+        // loud all the way up. Speaker power goes with the square of this, so each setting draws about a quarter of
+        // what it did.
+        static const float g[6] = {0.0f, 0.025f, 0.055f, 0.11f, 0.225f, 0.425f};
         voice[pick].gain = g[m.vol > 5 ? 5 : m.vol];
         voice[pick].born = ++serial;
         voice[pick].v.start((lf::Sound)m.snd, SR, esp_random());
@@ -61,10 +68,7 @@ static void audioTask(void*) {
       }
       quietBlocks = 0;
     }
-    if (!any && quietBlocks >= 20) {
-      if (paOn) { digitalWrite(PA_PIN, LOW); paOn = false; }
-      continue;                                   // idle: block on the queue (above)
-    }
+    if (!any && quietBlocks >= 20) continue;      // idle: block on the queue (above)
     for (int i = 0; i < 256; i++) {
       float s = 0;
       for (auto& p : voice) if (!p.v.done()) s += p.v.next() * p.gain;

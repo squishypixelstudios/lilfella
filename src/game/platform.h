@@ -3,6 +3,7 @@
 #pragma once
 #include <stdint.h>
 
+
 namespace lf {
 
 enum Sound : uint8_t {
@@ -37,8 +38,10 @@ class Platform {
   // Battery-backed clock. Returns false if the clock lost power / was never set.
   virtual bool rtcGet(DateTime& dt) = 0;
   virtual void rtcSet(const DateTime& dt) = 0;
-  // Accelerometer in g. Returns false if no fresh sample.
-  virtual bool imuRead(float& ax, float& ay, float& az) = 0;
+  // Whether the Auto off timer (Settings) may turn the screen off after a few untouched seconds. The device says
+  // yes. The browser page and the simulator's scripted tests say no: they leave the screen alone for long
+  // stretches (the screen still goes off after 3 untouched minutes).
+  virtual bool idleAutoOff() { return true; }
   // Persistent storage of one blob.
   virtual bool loadSave(void* buf, uint32_t len) = 0;   // true only if exactly len bytes were read
   virtual bool storeSave(const void* buf, uint32_t len) = 0;

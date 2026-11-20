@@ -8,14 +8,13 @@ namespace {
 struct WebPlat : Platform {
   uint32_t ms = 0;
   int64_t epochOffset = 0;
-  float ax = 0, ay = 1, az = 0;   // a browser has no tilt sensor: treated as held upright (never "laid flat")
+  bool idleAutoOff() override { return false; }   // the page stays lit while you watch (off after 3 untouched minutes)
   uint8_t store[2048]; uint32_t storeLen = 0; bool storeDirty = false;
   int16_t sndq[32]; int sh = 0, st = 0;
   uint32_t seed = 1;
   uint32_t millis() override { return ms; }
   bool rtcGet(DateTime& dt) override { dt = fromEpoch((uint32_t)(epochOffset + ms / 1000)); return true; }
   void rtcSet(const DateTime& dt) override { epochOffset = (int64_t)toEpoch(dt) - ms / 1000; }
-  bool imuRead(float& x, float& y, float& z) override { x = ax; y = ay; z = az; return true; }
   bool loadSave(void* buf, uint32_t len) override { if (storeLen != len) return false; memcpy(buf, store, len); return true; }
   bool storeSave(const void* buf, uint32_t len) override { if (len > sizeof store) return false; memcpy(store, buf, len); storeLen = len; storeDirty = true; return true; }
   void playSound(Sound s, uint8_t vol) override { int n = (st + 1) & 31; if (n != sh) { sndq[st] = (int16_t)(s | (vol << 8)); st = n; } }
@@ -49,7 +48,6 @@ EXP("snd_render") int snd_render(int id, int rate, uint32_t seed) {
 EXP("brightness") int brightness() { return G ? G->brightness() : 200; }
 EXP("display_on") int display_on() { return G ? G->displayOn() : 1; }
 EXP("screen") int screen() { return G ? (int)G->scr : 0; }
-EXP("set_imu") void set_imu(float x, float y, float z) { P.ax = x; P.ay = y; P.az = z; }
 EXP("set_clock") void set_clock(int y, int mo, int d, int h, int mi, int s) { P.rtcSet({(uint16_t)y, (uint8_t)mo, (uint8_t)d, (uint8_t)h, (uint8_t)mi, (uint8_t)s}); }
 EXP("init") void init(uint32_t seed, int y, int mo, int d, int h, int mi, int s) {
   P.seed = seed; P.ms = 1000;

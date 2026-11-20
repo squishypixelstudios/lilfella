@@ -18,6 +18,7 @@ constexpr int DOT = 4;                   // logical px per dot (pitch)
 constexpr int MX = (W - MW * DOT) / 2;   // 12
 constexpr int MY = 56;                   // top of the matrix
 constexpr int MY1 = MY + MH * DOT;      // 168: bottom of the matrix
+constexpr int MHX = 44;                  // the most rows the matrix can be given (POP plays on a taller one)
 
 enum Shade : uint8_t { SH_BG = 0, SH_FAINT = 1, SH_MID = 2, SH_INK = 3 };
 
@@ -48,10 +49,12 @@ class Frame {
 // The dot-matrix LCD. Dots hold a shade (0 = unlit).
 class Matrix {
  public:
-  uint8_t d[MW * MH];
+  uint8_t d[MW * MHX];
+  int h = MH;    // rows in use: MH, but a game may ask for a taller LCD (POP: up to MHX)
+  int y0 = MY;   // where its top is in the frame (logical px)
   void clear() { memset(d, 0, sizeof d); }
-  inline void set(int x, int y, uint8_t s) { if ((unsigned)x < (unsigned)MW && (unsigned)y < (unsigned)MH) d[y * MW + x] = s; }
-  inline uint8_t get(int x, int y) const { return ((unsigned)x < (unsigned)MW && (unsigned)y < (unsigned)MH) ? d[y * MW + x] : 0; }
+  inline void set(int x, int y, uint8_t s) { if ((unsigned)x < (unsigned)MW && (unsigned)y < (unsigned)h) d[y * MW + x] = s; }
+  inline uint8_t get(int x, int y) const { return ((unsigned)x < (unsigned)MW && (unsigned)y < (unsigned)h) ? d[y * MW + x] : 0; }
   void rect(int x, int y, int w, int h, uint8_t s);
   // sprite in dots. mode: 0 normal, 1 eyes closed. fill: shade for the body inside (0 = none)
   // mode: 0 awake, 1 eyes closed, 2 mouth open. fill: shade for the body inside the outline (0 = none).

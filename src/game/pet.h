@@ -35,8 +35,9 @@ struct Event {
 // Tuning (seconds). Kept in one place so balance is easy to change.
 constexpr float HOUR = 3600.0f;
 constexpr float DAY = 86400.0f;
-// Life stages (the looks): Lil Blob, then Lil Blub at 90 min, Lil Blunkus at 1 day, Lil Fella at 3 days.
-constexpr float AGE_BLUB = 15 * 60.0f;   // Lil Blob lasts 15 minutes
+// Life stages (the looks): Lil Blob, then Lil Blub at 1 hour, Lil Blunkus at 1 day, Lil Fella at 3 days.
+constexpr float AGE_BLUB = 60 * 60.0f;   // Lil Blob lasts an hour (and until its 7 lessons are learned)
+constexpr float TEST_NAP_SECS = 600.0f;  // the Lil Blob's one kind of daytime nap (the light lesson): 10 minutes, quicker with the light off
 constexpr float AGE_JUNIOR = 1 * DAY;    // Lil Blunkus: starts exploring, starts filling out
 constexpr float AGE_ADULT = 3 * DAY;     // Lil Fella: full-grown weight
 constexpr float AGE_BLORBUS = 8 * DAY;   // Big Blorbus: offered from here on (unless they are locked)
@@ -48,6 +49,7 @@ constexpr float SICK_DRAIN = 2.5f;       // health lost per awake hour for each 
 constexpr float SICK_MAX_LOSS = 3.5f;    // while sick, the most health they lose an hour from everything together (per sickness)
 constexpr float SICK_HIT = 25.0f;        // health lost the moment a sickness starts
 constexpr float SICK_CURE = 25.0f;       // health back from each dose of medicine
+constexpr int BOX_MAX = 12;             // poops the litter box holds: every one they do is in it until it is cleaned (past this it is as full as it gets)
 constexpr float SICK_LIGHT_FRAC = 0.15f; // the light left on for more than this share of a night's sleep: sick on waking
 constexpr float SICK_BUG_BY = 270.0f;    // the one starter bug (the medicine lesson): by this age (s), inside the first 5 minutes
 constexpr int SICK_MAX = 9;              // most sicknesses at once
@@ -74,7 +76,8 @@ struct PetData {
   uint8_t evolving;           // 1 = the hidden breed is decided at 1 day old (AGE_BREED)
   uint8_t pad0[2];            // [0] picked looks, [1] LOCK (see game.cpp)
   float age;                  // fella-seconds
-  float hunger, fun, energy;  // 0..100
+  float hunger, fun;          // 0..100
+  float unused1;              // (was energy, until v0.10: there is no energy any more. Kept so saves keep their layout)
   float health;               // 0..100
   float chonk;                // 0..100 (35 = ideal); 100 -> they dissolve
   float resent;               // 0..100; 100 -> runs away
@@ -99,7 +102,7 @@ enum EvoAcc { ACC_SPEED, ACC_CLEAN, ACC_WEIGHT, ACC_STRENGTH, ACC_NEGLECT, ACC_L
 
 struct SimCtx {
   bool night;             // their bedtime (depends on the life stage)
-  bool lightOff;          // lights off: they sleep (in the day, until rested)
+  bool lightOff;          // lights off (what a sleeper wants; a nap passes quicker)
   bool away;              // offline catch-up: gentler, never ends the game
   bool newborn = false;   // just out of the dropper: stays awake (even at bedtime) so you can look after them
   bool locked = false;    // LOCK: they don't age (so never grow up) and nothing ends their life; every need carries on
@@ -113,14 +116,13 @@ class Pet {
  public:
   explicit Pet(PetData& data) : d(data) {}
   PetData& d;
-  float sleepMul = 1.0f;   // > 1: sleep restores energy faster (lights off)
 
   // runtime-only state
   bool sleeping = false;
   float grump = 0;            // seconds of post-disturbance grumpiness
   float disturbCd = 0;
   uint8_t lastWarn = 0;
-  bool napping = false;       // asleep because of low energy
+  float nap = 0;              // seconds left of a daytime nap (only the Lil Blob's test nap starts one)
   bool ended = false;         // an ending event has been emitted
   float sadAcc = 0;           // seconds toward the next sadness unit (or back off one)
   uint32_t rng = 12345;
@@ -133,7 +135,7 @@ class Pet {
   bool canFeed() const { return !sleeping && !d.exploring && d.hunger <= 98.0f; }   // a completely stuffed fella refuses food
   float feed(Food f, bool& overfed);       // returns chonk gained
   void petIt(float amt);                  // affection
-  void exercise(float funGain, float energyCost, float chonkLoss);
+  void exercise(float funGain, float chonkLoss);   // a game played (games cost them nothing: play as much as you like)
   void disturb();                         // shaken while napping
   void wakeGently();
   void cleanFloor() { if (d.cleanActs < 60000) d.cleanActs++; if (d.floorMess) d.floorMess--; if (!d.floorMess) d.messAge = 0; }

@@ -1,4 +1,4 @@
-<title>Lil Fella v0.09</title>
+<title>Lil Fella v1.0.1</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -51,7 +51,7 @@ ul.how b { color: var(--fg); font-weight: 700; }
 
 <main>
   <section class="dev">
-    <h1>LIL FELLA <small style="font-size:.5em;opacity:.6">v0.09</small></h1>
+    <h1>LIL FELLA <small style="font-size:.5em;opacity:.6">v1.0.1</small></h1>
     <p class="sub">The firmware's game code, running in your browser. Click or tap the screen like the touchscreen.</p>
     <div class="shell">
       <canvas id="screen" width="368" height="448" tabindex="0" aria-label="Lil Fella screen"></canvas>
@@ -112,7 +112,6 @@ ul.how b { color: var(--fg); font-weight: 700; }
     <div class="card">
       <h2>Device</h2>
       <div class="row">
-        <button id="shake">Shake</button>
         <button id="snd" class="on">Sound on</button>
         <button id="reset" class="danger">Delete save</button>
         <button id="resetYes" class="danger" hidden>Yes, delete</button>
@@ -176,7 +175,7 @@ const WASM_B64 = "__WASM__";
     const id = code & 255, vol = (code >> 8) || 4;
     const b = take(id); if (!b) return;
     const src = ac.createBufferSource(), g = ac.createGain();
-    src.buffer = b; g.gain.value = [0, .06, .13, .25, .5, .9][vol > 5 ? 5 : vol];
+    src.buffer = b; g.gain.value = [0, .03, .065, .125, .25, .45][vol > 5 ? 5 : vol];
     src.connect(g); g.connect(master); src.start();
   }
 
@@ -208,9 +207,6 @@ const WASM_B64 = "__WASM__";
     names.forEach((n, i) => { const b = document.createElement('button'); b.textContent = n; b.addEventListener('click', () => { audioOn(); const was = sound; sound = true; play(i | 3 << 8); sound = was; }); board.appendChild(b); }); }
   document.querySelectorAll('[data-dbg]').forEach(b => b.addEventListener('click', () => X.debug_act(+b.dataset.dbg)));
   document.getElementById('speed').addEventListener('change', e => X.timescale(+e.target.value));
-  document.getElementById('shake').addEventListener('click', () => {
-    let i = 0; const iv = setInterval(() => { const a = (i % 2 ? 1 : -1) * 2.2; X.set_imu(a, 1, -a * .6); if (++i > 14) { clearInterval(iv); X.set_imu(0, 1, 0); } }, 40);
-  });
   const sndBtn = document.getElementById('snd');
   sndBtn.addEventListener('click', () => { audioOn(); sound = !sound; sndBtn.classList.toggle('on', sound); sndBtn.textContent = sound ? 'Sound on' : 'Sound off'; });
   const msg = document.getElementById('msg'), rs = document.getElementById('reset'), ry = document.getElementById('resetYes');

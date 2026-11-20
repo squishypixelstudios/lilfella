@@ -5,6 +5,8 @@
 #include <string.h>
 #include <Wire.h>
 #include <Preferences.h>
+#include <esp_wifi.h>
+#include <esp32-hal-bt.h>
 #include <Arduino_GFX_Library.h>
 #include "board.h"
 #if TOUCH_CST92XX
@@ -73,8 +75,6 @@ static_assert(PIC_X0 >= 0 && PIC_Y0 >= 0 && PIC_X0 + PIC_W <= LCD_WIDTH && PIC_Y
 
 
 static int lastBright = -1;   // -1 = never set, so the first request always goes through
-static bool haveImu = false;
-static uint8_t imuAddr = ADDR_QMI8658;
 static bool haveRtc = false;
 static bool haveAxp = false;
 #if TOUCH_CST92XX
@@ -111,7 +111,22 @@ static void i2cRecover() {
   digitalWrite(IIC_SDA, HIGH); delayMicroseconds(10);
 }
 
+// WiFi and Bluetooth: never used, never on. Nothing in this firmware starts either radio, so neither is powered and
+// nothing scans or advertises. This makes sure of it at every boot (should a library ever bring one up, it is
+// stopped and its driver freed here) and says so in the boot log.
+static void radiosOff() {
+  const esp_err_t w = esp_wifi_stop();
+  esp_wifi_deinit();
+  bool bt = false;
+#if defined(CONFIG_BT_ENABLED)
+  bt = btStarted();
+  if (bt) btStop();
+#endif
+  Serial.printf("[hal] radios: wifi %s, bluetooth %s\n", w == ESP_ERR_WIFI_NOT_INIT ? "off (never started)" : "stopped", bt ? "stopped" : "off (never started)");
+}
+
 void begin() {
+  radiosOff();
   i2cRecover();
   Wire.begin(IIC_SDA, IIC_SCL);
   Wire.setClock(400000);
@@ -186,17 +201,16 @@ void begin() {
   chunk = (uint16_t*)heap_caps_malloc((size_t)PIC_W * ROWS * 2 * sizeof(uint16_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
   if (!chunk) Serial.println("[hal] out of DMA memory for display chunk!");
 
-  // IMU: QMI8658, accel only, +-4 g @ ~125 Hz
+  // IMU: QMI8658. The game no longer uses motion, so the chip is put to sleep and never read. (It keeps its
+  // settings across a reset of the ESP32, so one left running by older firmware is switched off here.)
   uint8_t id = 0;
-  if (rd(ADDR_QMI8658, 0x00, &id, 1) && id == 0x05) imuAddr = ADDR_QMI8658;
-  else if (rd(0x6A, 0x00, &id, 1) && id == 0x05) imuAddr = 0x6A;
+  uint8_t imuAddr = ADDR_QMI8658;
+  if (!(rd(imuAddr, 0x00, &id, 1) && id == 0x05)) { imuAddr = 0x6A; if (!rd(imuAddr, 0x00, &id, 1)) id = 0; }
   if (id == 0x05) {
-    wr(imuAddr, 0x02, 0x40);  // CTRL1: auto-increment register address
-    wr(imuAddr, 0x03, 0x16);  // CTRL2: accel +-4g, ODR code 6 (~125 Hz)
-    wr(imuAddr, 0x08, 0x01);  // CTRL7: enable accelerometer
-    haveImu = true;
+    wr(imuAddr, 0x08, 0x00);  // CTRL7: accelerometer and gyroscope off
+    wr(imuAddr, 0x02, 0x41);  // CTRL1: bit 0 = sensor disable (its internal oscillator stops)
   }
-  Serial.printf("[hal] imu %s\n", haveImu ? "ok" : "missing");
+  Serial.printf("[hal] imu %s\n", id == 0x05 ? "off" : "missing");
 
   // Power manager AXP2101: turn on battery detection + voltage measuring so the fuel gauge works
   {
@@ -435,7 +449,10 @@ bool EspPlatform::powerButton() {
   const bool boot = digitalRead(0) == LOW;
   if (boot && !bootWas) pressed = true;
   bootWas = boot;
-  if (haveAxp && ::millis() - lastPoll > 80) {   // don't hammer the I2C bus
+  // The PWR key is asked for once a second (it was 12 times a second): the power chip latches a short press until
+  // it is read, so none is missed; the screen just answers the PWR key up to a second late. BOOT and the user key
+  // above are plain pins, read every frame at no cost.
+  if (haveAxp && ::millis() - lastPoll >= 1000) {
     lastPoll = ::millis();
     uint8_t st = 0;
     if (rd(ADDR_AXP2101, 0x49, &st, 1) && (st & 0x08)) { wr(ADDR_AXP2101, 0x49, 0x08); pressed = true; }
@@ -459,18 +476,6 @@ static void battPoll() {
 }
 int EspPlatform::batteryPercent() { battPoll(); return battPct; }
 bool EspPlatform::batteryCharging() { battPoll(); return battChg; }
-
-bool EspPlatform::imuRead(float& ax, float& ay, float& az) {
-  if (!haveImu) return false;
-  uint8_t r[6];
-  if (!rd(imuAddr, 0x35, r, 6)) return false;
-  int16_t x = (int16_t)(r[0] | (r[1] << 8));
-  int16_t y = (int16_t)(r[2] | (r[3] << 8));
-  int16_t z = (int16_t)(r[4] | (r[5] << 8));
-  const float k = 4.0f / 32768.0f;
-  ax = x * k; ay = y * k; az = z * k;
-  return true;
-}
 
 static Preferences prefs;
 

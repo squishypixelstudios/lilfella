@@ -2,18 +2,17 @@
 // The fella's needs, ageing, moods and endings live in pet.cpp;
 // this layer is the classic presentation: a 40x28 dot-matrix LCD with 8 icons, all in 4 shades.
 //   game.cpp    loop, clock, power, events, care rules, save
-//   view.cpp    the dot-matrix scenes, icons, animations, mini-games
+//   view.cpp    the dot-matrix scenes, icons, animations, mini-games (POP, the bubble shooter, is in pop.cpp)
 //   pages.cpp   full-screen pages: first-time setup, settings, confirm
 #pragma once
 #include "platform.h"
 #include "lcd.h"
 #include "pet.h"
 #include "save.h"
-#include "motion.h"
 
 namespace lf {
 
-constexpr const char* LF_VERSION = "0.09";   // shown in Settings and the boot log
+constexpr const char* LF_VERSION = "1.0.1";   // shown in Settings and the boot log
 
 // ---- touch (defaults; tweak here when re-testing on the device) ----
 // Screen scale: ~12.7 physical px per mm, so 1 logical px = ~0.16 mm and one LCD dot (4 px) = ~0.63 mm. A fingertip
@@ -25,29 +24,39 @@ constexpr int TOUCH_REACH = 5;          // dots around a small LCD target that s
 constexpr int SETTINGS_Y0 = 20;        // Settings rows: y of the first row
 constexpr int SETTINGS_STEP = 30;      // distance between rows
 constexpr int SETTINGS_ROW_H = 28;     // row height: 56 physical px, about 4.5 mm
-constexpr uint32_t AUTO_OFF_MS[5] = {5000, 0, 15000, 30000, 60000};   // laid flat and untouched this long: the screen turns off
+constexpr uint32_t AUTO_OFF_MS[5] = {5000, 0, 15000, 30000, 60000};   // untouched this long: the screen turns off
                                                      // (Settings: Auto off; indexed by sv.eq[2]: 5 Sec, Never, 15 Sec, 30 Sec, 1 Min)
 constexpr int TOUCH_LONG_MS = 1200;     // hold this long on the LCD to open Settings
 
 constexpr float DROP_AGE = 10.0f;       // a new Lil Blob's starting age (s), once it's squeezed out of the dropper
-// Stages: Lil Blub at 90 minutes, Lil Blunkus at 1 day, Lil Fella at 3 days (see pet.h).
+// Stages: Lil Blub at 1 hour, Lil Blunkus at 1 day, Lil Fella at 3 days (see pet.h).
 constexpr float BABY_END = AGE_BLUB;
 constexpr float CHILD_END = AGE_JUNIOR;
 constexpr float TEEN_END = AGE_ADULT;
 constexpr float SQUEEZE_SECS = 7.6f;    // the squeeze out of the dropper: the long fall from the sky, then the gooey landing
-constexpr int LITTER_BUBBLES = 24;   // Bubble Pop Rush: bubble slots
 constexpr float NEWBORN_AWAKE = 1800.0f;  // a fresh Lil Blob's bedtime doesn't start until this long after landing: one made during
                                           // sleep time falls asleep 30 minutes afterwards. Naps aren't held back (the test nap that
                                           // teaches the light comes at 6-9 minutes), and one still going at 30 minutes runs on into the night
 constexpr float ENDING_WAIT_AT = 4.6f;  // an ending: they melt, and the dropper is down over the puddle, waiting for your push
 constexpr int ENDING_PULLS = 3;       // an ending: squeezes needed to suck the puddle up
-constexpr int ENDING_SHAKES = 3;      // ... then shakes of the device
-constexpr float ENDING_UP_AT = 3.0f;   // seconds after the last squeeze when the dropper is up top and wants a shake
+constexpr float ENDING_UP_AT = 3.0f;   // seconds after the last squeeze when the dropper is back up top: the name page opens
 constexpr float EAT_SECS = 2.6f;        // eating: bites (Lil Blunkus and Lil Fella)
 constexpr float ABSORB_SECS = 6.0f;     // eating: walk over, stretch round the food, zoom in on it dissolving (Lil Blob, Lil Blub)
 constexpr float GAME_IDLE_SECS = 30.0f; // a game (or the scrub) left untouched this long goes back to the home screen
-constexpr int POOPUP_N = 6;             // POOP UP: poop bubbles to float away
-constexpr float POOPUP_INTRO = 2.0f;    // POOP UP: the "POP EMPTY ONLY" card before the bubbles come
+constexpr float RUN_CARD_SECS = 4.0f;    // RUN: the how-to card (tap = jump, tap again = double jump) goes on its own after this long, or at a tap
+// ---- POP: the bubble shooter (pop.cpp) ----
+constexpr int POP_COLS = 8;             // bubbles across (the odd rows hold one fewer, half a bubble along)
+constexpr int POP_MH = 43;              // POP has the whole screen: its LCD is this many rows of dots (the icons are put away)...
+constexpr int POP_MY = 30;              // ...and starts here in the frame (logical px), under the BACK button
+constexpr int POP_ROWS = 9;             // rows the field keeps (more than fit on screen: the ceiling's drops use them up)
+constexpr int POP_SAFE_ROWS = 7;        // rows that fit above the line; a bubble below it ends the game
+constexpr int POP_START_ROWS = 3;       // full rows to start with...
+constexpr int POP_START_EXTRA = 4;      // ...and up to this many more hanging under them
+constexpr int POP_DROP_EVERY = 8;       // shots between the ceiling coming down a row
+constexpr float POP_CARD_SECS = 4.0f;   // the how-to card goes on its own after this long, or at a tap
+constexpr float POP_MAX_ANG = 1.31f;    // aim: up to 75 degrees either side of straight up
+// The five kinds of bubble: no colours on this LCD, so they differ by what's inside them.
+enum PopKind : uint8_t { PK_NONE, PK_X, PK_TRIANGLE, PK_DIAMOND, PK_EMPTY, PK_BLACK, PK_COUNT };
 
 // ---- litter box (right-hand side of the LCD) ----
 constexpr int BOX_X = 29;               // left dot column of the litter box (floor mess is laid out leftward from here)
@@ -58,16 +67,16 @@ enum IconId : uint8_t { IC_FEED, IC_LIGHT, IC_PLAY, IC_MEDS, IC_LITTER, IC_METER
 constexpr int ICON_TOP_Y = 20, ICON_BOT_Y = 188;   // top-left y of the 16x16 icons
 constexpr int ICON_X[4] = {28, 65, 103, 140};      // icon left x (kept clear of the rounded screen corners)
 // Where each icon sits: slots 0-3 along the top, 4-7 along the bottom. (Icon ids stay fixed: the first-hour
-// lessons save one bit per id.) The litter scoop is top right, medicine bottom left.
-constexpr IconId ICON_AT[IC_COUNT] = {IC_FEED, IC_LIGHT, IC_PLAY, IC_LITTER, IC_MEDS, IC_METER, IC_LOCK, IC_CALL};
+// lessons save one bit per id.) The litter scoop is top right, the meter (stats) bottom left, medicine next to it.
+constexpr IconId ICON_AT[IC_COUNT] = {IC_FEED, IC_LIGHT, IC_PLAY, IC_LITTER, IC_METER, IC_MEDS, IC_LOCK, IC_CALL};
 constexpr int iconSlot(int ic) { for (int s = 0; s < IC_COUNT; s++) if (ICON_AT[s] == ic) return s; return 0; }
 constexpr int iconX(int ic) { return ICON_X[iconSlot(ic) % 4]; }
 constexpr int iconY(int ic) { return iconSlot(ic) < 4 ? ICON_TOP_Y : ICON_BOT_Y; }
 
 enum Screen : uint8_t {
   S_SETUP_CLOCK, S_SETUP_NAME, S_TITLE,
-  S_MAIN, S_MENU, S_ANIM, S_METER, S_DODGE, S_RUN, S_ORBIT, S_EVOLVE, S_LITTER, S_YEET, S_SCRUB, S_LOCK, S_ENDING,
-  S_SETTINGS, S_CONFIRM, S_FRIENDS, S_JOURNAL, S_COUNT
+  S_MAIN, S_MENU, S_ANIM, S_METER, S_DODGE, S_RUN, S_ORBIT, S_EVOLVE, S_POP, S_YEET, S_SCRUB, S_LOCK, S_ENDING,
+  S_SETTINGS, S_CONFIRM, S_FRIENDS, S_JOURNAL, S_ABOUT, S_COUNT
 };
 enum AnimId : uint8_t {
   AN_NONE, AN_EAT_MEAL, AN_EAT_SNACK, AN_EAT_DIET, AN_REFUSE, AN_MEDS, AN_LOCK,
@@ -122,13 +131,7 @@ class Game {
 
   void simulate(float seconds, bool away);
   const char* nameBuf() const { return nameBuf_; }
-  int endShakes() const { return endShakes_; }   // tests
-  int lgN() const { return lg_.n; }   // tests: litter game rounds
-  int lgGot() const { return lg_.got; }
-  bool lgBubble(int i, int& x, int& y, bool& poop) const;   // tests: where a live bubble is (centre, in dots)
   void endNewborn() { newbornT_ = 0; }   // tests: skip the first 30 awake minutes
-  int lgMisses() const { return lg_.missesTotal; }
-  void lgForce(int i, bool on, int kind, float x, float y) { auto& b = lg_.b[i]; b.on = on; b.kind = (uint8_t)kind; b.pop = 0; b.x0 = x; b.y = y; b.ph = 0; b.v = kind == 1 ? 5.0f : 0; b.vx = b.vy = 0; }   // tests: place a bubble
   int tutWant() const { return tutWant_; }
   int anim() const { return an_; }   // tests: the animation playing
   float blobX() const { return blobX_; }   // tests: where the fella stands (dots)
@@ -144,13 +147,13 @@ class Game {
   struct In {
     bool down = false, pressed = false, released = false, tap = false, longPress = false, longDone = false;
     int x = 0, y = 0, px = 0, py = 0;
+    int ax = 0, ay = 0;         // where the finger rested: the average of every reading in this press
+    long sumX = 0, sumY = 0; int nSamp = 0;
     int maxMove = 0;            // farthest the finger got from where it went down (px), over the whole press
     uint32_t downMs = 0;
     int heldMs = 0;
   } in;
   bool swallow_ = false;
-  MotionDetector motion_;
-  float imuT_ = 0;
 
   // timing / power
   float simAccum_ = 0, clockT_ = 0, saveT_ = 0, saveCool_ = 0;
@@ -167,15 +170,16 @@ class Game {
   int meterPage_ = 0;
   ConfirmId confirm_ = CF_NONE;
   int setPage_ = 0;           // Settings page: 0, 1, 2
+  Screen setFrom_ = S_MAIN;   // where Settings was opened from: an animation or an ending carries on after Back
+  float setFromT_ = 0;        // ... and how far into that screen it was (scrT_)
+  void openSettings();
+  void leaveSettings();
   int friendsPage_ = 0;       // the friends log: 4 to a page
   int journalSel_ = -1;       // the Journal: the look tapped (its name shows), -1 = none
   float suckAt_ = -1;         // ending: when you pushed the dropper (scrT_), -1 = not yet
   bool squeezing_ = false;    // ending: your finger is squeezing the bulb
   int endPulls_ = 0;          // ending: squeezes done so far (ENDING_PULLS needed to suck it all up)
   float pullAt_ = -1;         // ending: when the last squeeze was let go
-  int endShakes_ = 0;         // ending: shakes of the device so far (ENDING_SHAKES needed)
-  float shakeFlash_ = 0;      // ending: the dropper is jiggling from your shake
-  float dispAt_ = -1;         // ending: when you tapped to squeeze out the new blob
   bool nameFresh_ = true;       // the name on the page is still a random one: the first key you type replaces it
   char nameBuf_[12] = "";       // the name on the name page (random, see pickName)
   int nameSeed_ = 0;
@@ -213,7 +217,7 @@ public:   // (the simulator tests the evolution tree)
   void blobSprite(Form f, int& idle, int& alt, int& sleep) const;
   float ballHx_ = 0;
   // RUN: a side-scroller, tap to jump the things coming at you
-  struct Run { int phase, hitX, air2, cause, sinceP, wallDone; float t, dist, y, vy, next, score, boost; struct { float x; uint8_t w, h, kind, by; bool on; uint8_t dj; } ob[6]; } rn_{};   // wallDone: double-jumped over a tall wall (needed for the 4th heart)
+  struct Run { int phase, hitX, air2, cause, sinceP, wallDone, nextP; float t, dist, y, vy, next, score, boost, card; struct { float x; uint8_t w, h, kind, by; bool on; uint8_t dj; } ob[6]; } rn_{};   // wallDone: double-jumped over a tall wall (needed for the 4th heart); nextP: things to come before the next power-up; card: seconds the how-to card has left (0 = playing)
   void runStep(float dtReal, bool press, bool sim);   // one tick of RUN (sim = look-ahead for tests: no spawning, sounds or rewards)
   float runBest_ = 0;
   // ORBIT CATCH: the fella circles a sun on one of two orbits eating planets, tap to hop between them (Big Blorbus's game, in the Feed slot)
@@ -245,28 +249,45 @@ private:
   void lessonTick();
 
 
-  // POP (a game in the Play menu; it was POOP UP, and before that the clean-up game): bubbles float up, some carry a poop; pop the
-  // empty ones in their way so the poop ones float off the top
-  struct LitterGame {
-    int n, box, floor, got, misses, missesTotal;
-    bool done, result;
-    float t, doneT, idle, spawnT, decoyT;
-    bool lowFull;   // Bubble Pop Rush: no free spot for another middle/bottom bubble
-    struct { float x0, y, v, ph, pop, vx, vy; uint8_t kind; bool on; } b[LITTER_BUBBLES];   // empty bubbles: x0,y with velocity vx,vy; poop bubbles rise at v and sway   // kind 1 = carries a poop
-  } lg_{};
-  void startPoopUp();
-  void screenLitter();
-  void finishLitter();
+public:
+  // POP (Play menu): a bubble shooter after Puzzle Bobble. Aim, fire, match three of a kind (pop.cpp).
+  struct Pop {
+    int phase;                    // 1 aiming, 2 a bubble in flight, 3 over (a moment to see how), 4 the result
+    float t, card, overT, ang, bx, by, vx, vy, shake, carry;   // card: seconds the how-to card has left; ang: the aim (0 = straight up)
+    int drops, sinceDrop, shots, popped, start, hearts;  // drops: rows the ceiling has come down; start: bubbles at the start
+    bool aiming, won;
+    uint8_t cur, next;            // the bubble in the launcher, and the one after it (PopKind)
+    uint8_t g[POP_ROWS][POP_COLS];   // the field: g[row][col], row 0 against the ceiling
+    struct { float x, y, vy, t; uint8_t kind, fall; bool on; } fx[40];   // bubbles popping (fall 0) or dropping off (1)
+  } pop_{};
+  static int popCols(int r) { return (r & 1) ? POP_COLS - 1 : POP_COLS; }
+  static int popCellX(int r, int c) { return c * 5 + ((r & 1) ? 2 : 0); }   // a bubble's left dot column...
+  int popCellY(int r) const { return (r + pop_.drops) * 5; }                 // ...and its top row
+  static int popNeighbours(int r, int c, int nr[6], int nc[6]);
+  static float popAngleAt(int px);                    // the aim for a finger at this logical x
+  bool popTrace(float ang, int& r, int& c, int* bounces = nullptr) const;   // where a shot at this angle would land
+  int popCount() const;                               // bubbles on the field
+  void popFire(float ang);
+  void startPop();
+private:
+  bool popAdvance(float& x, float& y, float& vx, float& vy, float dist, int& r, int& c, bool* bounced) const;
+  void popLand(int r, int c);
+  void popEnd(bool won);
+  uint8_t popPick();
+  void screenPop();
+  static bool popBackAt(int px, int py);   // is this spot (logical px) on POP's BACK button?
+  void drawPopBack(Frame& f);
   float gameIdle_ = 0;        // seconds a game screen has gone untouched (GAME_IDLE_SECS: back home)
   Screen gameScr_ = S_MAIN;
 
 public:
   // Clean (soap icon): scrub the mess away - rub a finger back and forth, the suds build up, it wipes clean
-  // Every poop is different: its shape, where it lies, and how stuck-on it is (tough 1-5: up to 5x the rubbing).
+  // Every poop is different: its shape, where it lies, and how stuck-on it is (tough 1-5: up to twice the rubbing).
+  // Every poop since the last clean is in it, and each is more to scrub.
   struct Scrub {
     float t, prog, need, base, doneT; int lx, ly, box, floor, ns, np; bool had, done;
     struct { int8_t x, y; uint8_t k; float born; } suds[48];   // born: S.t when it was made (they fade after SUDS_SECS)
-    struct { int8_t x, y; uint8_t shape, tough; float hp, hp0; } poo[10];
+    struct { int8_t x, y; uint8_t shape, tough; float hp, hp0; } poo[BOX_MAX + 4];   // (the box, and up to 4 on the floor)
   } sc_{};
   void startScrub();
   void screenScrub();
@@ -301,6 +322,7 @@ private:
   friend struct JournalTest;   // sim: the Journal
   friend struct NewTests;      // sim: v0.07 (sickness, scrub, POOP UP, YEET)
   friend struct NewShots;
+  friend struct V010;          // sim: v0.10 (POP, scrub resume, RUN card, wiki pictures)
 
   // ---- game.cpp ----
   void updateInput(bool down, int x, int y);
@@ -310,7 +332,6 @@ private:
   SimCtx ctx(bool away) const;
   void careTick(float seconds);
   void handleEvents();
-  void updateMotion();
   void updatePower();
   void backHomeForSleep();
   void wake() { idleSec = 0; screenOn_ = true; }      // only for a tap, the button or power-on
@@ -367,15 +388,16 @@ private:
 public:
   int eatRoutine() const;     // that routine for the current look (eatfx::Routine), 0 = the plain three bites
   float eatSecs() const;
-  float lgX(int i) const;     // Bubble Pop Rush: a bubble's drawn x (poop bubbles sway, empty ones move for real)
   uint8_t eatVar_ = 0;        // the routine's random variant, picked every feed (Marshy: which wall)
+  int eatFromX_ = 0;          // where they stood when the food came (the Lil Blob's meal is laid out from it: see drawAbsorb)
   const uint8_t* dots() const { return m_.d; }   // the LCD dots (tests)
 private:
   float ballHy_ = 0, ballHv_ = 0, ballSq_ = 0, ballPrevX_ = 0; int ballRun_ = 1; bool ballWasMoving_ = false;   // Big Ballboi's hamster
   void drawBallboi(int x, int y, bool still);
   void updateBall();
   void drawSquish(int x, int y, int id, int w, int h, bool flip, uint8_t sick = 0);   // a sprite stretched to w x h dots (the body engulfing food)
-  void drawAbsorb(float t);                         // the young eat by absorbing their food
+  void drawBelly(int x, int y, int id, int ew, int eh, bool flip);   // a sprite with columns let into its side and rows into its belly
+  void drawAbsorb(float t);                         // the Lil Blob eats by absorbing its food
   int gameSprite() const;     // the look used in the games (a smaller one for the young)
   void drawGameBlob(int x, int y, bool flip, int mode, bool alt);
 public:
@@ -395,6 +417,7 @@ private:
   void pageConfirm(Frame& f);
   void pageFriends(Frame& f);
   void pageJournal(Frame& f);
+  void pageAbout(Frame& f);
   void eraseAll();            // Settings → Erase everything
   bool pageButton(Frame& f, int x, int y, int w, int h, const char* label, bool enabled = true);
   bool tapIn(int x, int y, int w, int h) const;

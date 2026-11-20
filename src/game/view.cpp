@@ -257,9 +257,10 @@ void Game::drawIcons(Frame& f) {
   static const uint8_t ids[IC_COUNT] = {SPR_IC_FEED, SPR_IC_LIGHT, SPR_IC_PLAY, SPR_IC_MEDS, SPR_IC_LITTER, SPR_IC_METER, SPR_IC_UNLOCK, SPR_IC_CALL};
   const bool call = callReason() != CR_NONE;
   int pressed = -1;   // the slot under the finger
-  if (in.down) {
-    if (in.py < MY - 4) pressed = in.px < 54 ? 0 : in.px < 92 ? 1 : in.px < 130 ? 2 : 3;
-    else if (in.py > MY1 + 4) pressed = 4 + (in.px < 54 ? 0 : in.px < 92 ? 1 : in.px < 130 ? 2 : 3);
+  if (in.down) {   // (the same spot a tap will be judged by, so the icon that lights is the one that fires)
+    const int col = in.ax < 54 ? 0 : in.ax < 92 ? 1 : in.ax < 130 ? 2 : 3;
+    if (in.py < MY - 4) pressed = col;
+    else if (in.py > MY1 + 4) pressed = 4 + col;
   }
   if (scr == S_EVOLVE) f.textCenter(W / 2, ICON_TOP_Y + 4, "Pick new form:", SH_INK);   // the look picker's heading
   for (int s = 0; s < IC_COUNT; s++) {
@@ -273,7 +274,10 @@ void Game::drawIcons(Frame& f) {
 
 bool Game::iconTapped(int& which) const {
   if (!in.tap) return false;
-  int col = in.px < 54 ? 0 : in.px < 92 ? 1 : in.px < 130 ? 2 : 3;
+  // Which icon: by where the finger rested over the whole press (in.ax), not the very first spot it touched. A
+  // fingertip lands on its edge and rolls flat, so the first reading can be a few mm to one side: enough to turn
+  // Meter into Medicine, its neighbour. (Top or bottom row is still decided by where it went down.)
+  int col = in.ax < 54 ? 0 : in.ax < 92 ? 1 : in.ax < 130 ? 2 : 3;
   if (in.py < MY - 4) { which = ICON_AT[col]; return true; }
   if (in.py > MY1 + 4) { which = ICON_AT[4 + col]; return true; }
   return false;
@@ -290,7 +294,7 @@ bool Game::inMatrix(int x, int y, int& dx, int& dy) const {
 void Game::startAnim(AnimId a, float len, int arg) {
   if (scr == S_ANIM && an_ == AN_MEDS && anT_ < anLen_) return;   // the medicine plays out: nothing cuts it short
   an_ = a; anT_ = 0; anLen_ = len; anArg_ = arg;
-  if (a == AN_EAT_MEAL || a == AN_EAT_SNACK || a == AN_EAT_DIET) eatVar_ = (uint8_t)(pet.rnd() & 1);
+  if (a == AN_EAT_MEAL || a == AN_EAT_SNACK || a == AN_EAT_DIET) { eatVar_ = (uint8_t)(pet.rnd() & 1); eatFromX_ = (int)blobX_; }
   if (scr != S_ANIM) setScreen(S_ANIM);
 }
 
@@ -339,7 +343,6 @@ void Game::doIcon(int ic) {
       feedMeal(); return;   // the Feed icon serves a meal, straight away
     case IC_PLAY:
       if (asleep) { sound(SND_NOPE); say("ZZZ"); setScreen(S_MAIN); return; }
-      if (pet.d.energy < 10) { sound(SND_NOPE); say("TIRED"); setScreen(S_MAIN); return; }
       sound(SND_MENU); setScreen(S_MENU); selIcon_ = ic; return;
     case IC_MEDS:
       if (pet.sick()) { pet.vetVisit(); markIcon(IC_MEDS); sound(SND_MEDS); startAnim(AN_MEDS, MEDS_SECS, pet.sickStack()); }   // the dose works at once (arg: sicknesses left). The medicine lesson: a sickness cured
@@ -445,250 +448,45 @@ void Game::drawScene(bool withBlob) {
   }
 }
 
-// The litter box (bottom right) is only out while there's poop in it waiting to be cleaned: a tray, the poops
-// piled in it (up to 6 shown), and the smell. Floor mess sits in front of it, to the left.
+// The litter box (bottom right) is only out while there's poop in it waiting to be cleaned: a tray, every poop
+// they've done since it was last cleaned (up to BOX_MAX) and the smell. Six make a tidy pile. Leave it longer and
+// it's a tower, one on another, swaying more the taller it gets: a fly finds it at 8, somebody plants a flag on the
+// top at 10, and a second fly joins at 11. Floor mess sits in front of it, to the left.
 void Game::drawLitter(int boxPoos, int floorPoos, bool box) {
   const bool st = (int)(anim_ * 2.5f) & 1;
+  if (boxPoos > BOX_MAX) boxPoos = BOX_MAX;
   if (boxPoos >= 1 || box) {
     for (int x = BOX_X; x < BOX_X + BOX_W; x++) m_.set(x, FLOOR, SH_INK);                                  // the tray
     for (int y = FLOOR - 3; y < FLOOR; y++) { m_.set(BOX_X, y, SH_INK); m_.set(BOX_X + BOX_W - 1, y, SH_INK); }
     static const int8_t PX[6] = {1, 4, 7, 2, 6, 4}, PY[6] = {2, 2, 2, 4, 4, 6};   // three along the bottom, two on those, one on top
-    for (int i = 0; i < boxPoos && i < 6; i++) m_.sprite(BOX_X + PX[i], FLOOR - PY[i], SPR_POO);
-    const int top = boxPoos > 5 ? 6 : boxPoos > 3 ? 4 : 2;
-    if (boxPoos >= 1) m_.sprite(BOX_X + 6, FLOOR - top - 5, st ? SPR_STINK1 : SPR_STINK2);
-    if (boxPoos >= 3) m_.sprite(BOX_X + 1, FLOOR - top - 7, st ? SPR_STINK2 : SPR_STINK1);
+    static const int8_t LEAN[BOX_MAX - 6] = {1, 0, -1, 0, 1, 0};                  // then the tower: none of it quite straight
+    int tx = BOX_X + 4, ty = FLOOR - 2;   // the one on top
+    for (int i = 0; i < boxPoos; i++) {
+      if (i < 6) { tx = BOX_X + PX[i]; ty = FLOOR - PY[i]; }
+      else { tx = BOX_X + 4 + LEAN[i - 6] + (int)lroundf(sinf(anim_ * 1.7f) * (i - 5) * 0.3f); ty = FLOOR - 6 - 2 * (i - 5); }
+      m_.sprite(tx, ty, SPR_POO);
+    }
+    const int top = boxPoos > 6 ? 6 + 2 * (boxPoos - 6) : boxPoos > 5 ? 6 : boxPoos > 3 ? 4 : 2;
+    if (boxPoos > 6) {   // the smell comes off the sides of a tower (the top is taken)
+      m_.sprite(BOX_X + 8, FLOOR - top + 1, st ? SPR_STINK1 : SPR_STINK2);
+      m_.sprite(BOX_X, FLOOR - top - 1, st ? SPR_STINK2 : SPR_STINK1);
+    } else {
+      if (boxPoos >= 1) m_.sprite(BOX_X + 6, FLOOR - top - 5, st ? SPR_STINK1 : SPR_STINK2);
+      if (boxPoos >= 3) m_.sprite(BOX_X + 1, FLOOR - top - 7, st ? SPR_STINK2 : SPR_STINK1);
+    }
+    for (int k = 0; k < (boxPoos >= 11 ? 2 : boxPoos >= 8 ? 1 : 0); k++) {   // flies
+      const float a = anim_ * (6.0f + k * 2.5f) + k * 3.0f;
+      m_.set(BOX_X + 5 + (int)lroundf(cosf(a) * 5.0f), FLOOR - 4 - top / 2 + (int)lroundf(sinf(a * 1.3f) * 3.0f), SH_INK);
+    }
+    if (boxPoos >= 10) {   // the flag: it flaps
+      for (int y = ty - 4; y < ty; y++) m_.set(tx + 1, y, SH_INK);
+      m_.set(tx + 2, ty - 4, SH_INK); m_.set(tx + 2, ty - 3, SH_INK); m_.set(tx + 3, st ? ty - 4 : ty - 3, SH_INK);
+    }
   }
   for (int i = 0; i < floorPoos && i < 4; i++) {
     const int x = BOX_X - 4 - i * 4;
     m_.sprite(x, FLOOR - 1, SPR_POO);
     m_.sprite(x, FLOOR - 5, st ^ (i & 1) ? SPR_STINK1 : SPR_STINK2);
-  }
-}
-
-// ---------------------------------------------------------------------------------------------
-// POP (Play menu; it was POOP UP): poop bubbles float up and away. Clear soap bubbles drift in their way and block them; pop
-// the clear ones to clear the path. Popping a poop bubble by mistake splats it (a miss, it has to be redone).
-// POOPUP_N poop bubbles; the fewer splats, the more hearts.
-// ---------------------------------------------------------------------------------------------
-static constexpr int LB_N = LITTER_BUBBLES;
-
-static int poopUpHearts(int splats) { return splats == 0 ? 4 : splats == 1 ? 3 : splats <= 3 ? 2 : splats <= 5 ? 1 : 0; }
-
-void Game::startPoopUp() {
-  LitterGame& L = lg_;
-  memset(&L, 0, sizeof L);
-  L.n = POOPUP_N;
-  L.spawnT = 0.3f;
-  selIcon_ = IC_PLAY;
-  setScreen(S_LITTER);
-}
-
-float Game::lgX(int i) const {
-  const auto& b = lg_.b[i];
-  return b.kind == 1 ? b.x0 + sinf(lg_.t * 2.0f + b.ph) * 2.0f : b.x0;
-}
-
-bool Game::lgBubble(int i, int& x, int& y, bool& poop) const {
-  if (i < 0 || i >= LB_N) return false;
-  const auto& b = lg_.b[i];
-  if (!b.on || b.pop > 0) return false;
-  x = (int)lroundf(lgX(i)) + 3; y = (int)lroundf(b.y) + 3; poop = b.kind == 1;
-  return true;
-}
-
-void Game::finishLitter() { setScreen(S_MAIN); }
-
-void Game::screenLitter() {
-  LitterGame& L = lg_;
-  L.t += dt;
-  int dx, dy, ic;
-  if (iconTapped(ic)) {
-    if (ic == IC_PLAY) { sound(SND_BACK); finishLitter(); }   // leave
-    else { finishLitter(); doIcon(ic); }
-    return;
-  }
-  if (L.result) {   // the score, on a clear screen
-    char b[16];
-    snprintf(b, sizeof b, "%d UP", L.got);
-    m_.textCenter(2, b);
-    hearts(m_, 12, poopUpHearts(L.missesTotal) * 25.0f);
-    snprintf(b, sizeof b, L.missesTotal == 1 ? "%d SPLAT" : "%d SPLATS", L.missesTotal);
-    m_.smallCenter(21, b, SH_MID);
-    L.doneT += dt;
-    if (L.doneT > 0.6f && in.tap) finishLitter();
-    return;
-  }
-  if (L.t < POOPUP_INTRO) {   // the card: what to do, before any bubbles come
-    m_.smallCenter(6, "POP EMPTY");
-    m_.smallCenter(12, "ONLY");
-    static const char* ring[5] = {".XXX.", "X...X", "X...X", "X...X", ".XXX."};
-    for (int yy = 0; yy < 5; yy++) for (int xx = 0; xx < 5; xx++) if (ring[yy][xx] == 'X') m_.set(17 + xx, 19 + yy, SH_INK);
-    m_.set(18, 20, SH_MID);
-    return;
-  }
-  const float rush = 1.0f + 0.12f * L.got;
-  if (!L.done) {
-    int afloat = 0, clear = 0;
-    int low = 0;   // empty bubbles in the middle/bottom band
-    for (int i = 0; i < LB_N; i++) if (L.b[i].on && L.b[i].pop <= 0) { if (L.b[i].kind == 1) afloat++; else { clear++; if (L.b[i].kind == 2) low++; } }
-    L.spawnT -= dt; L.decoyT -= dt;
-    auto spawn = [&](uint8_t kind, bool lowRow, bool topRoom) {
-      for (int i = 0; i < LB_N; i++) if (!L.b[i].on) {
-        auto& b = L.b[i];
-        if (lowRow) {   // an extra empty bubble in the middle or bottom of the screen, on a free spot (never on another bubble)
-          for (int tries = 0; tries < 40; tries++) {
-            const float x = 3.0f + pet.rndf() * (MW - 14.0f), y = (pet.rnd() & 1 ? 13.0f : 20.0f) + pet.rndf() * 1.0f;   // a middle row and a bottom row
-            bool free = true;
-            for (int j = 0; j < LB_N && free; j++) if (L.b[j].on && L.b[j].pop <= 0 && fabsf(L.b[j].y - y) < 7.0f && fabsf(L.b[j].x0 - x) < 9.0f) free = false;   // (9: room for both to sway)
-            if (!free) continue;
-            b.on = true; b.kind = 2; b.pop = 0; b.ph = pet.rndf() * 6.28f; b.x0 = x; b.y = y; b.v = 0; b.vx = b.vy = 0;   // kind 2: an extra empty one
-            return;
-          }
-          L.lowFull = true;       // no free spot left down there (until one is popped)
-          if (!topRoom) return;   // one for the top instead
-        }
-        if (kind != 1 && !topRoom) return;
-        b.on = true; b.kind = kind; b.pop = 0; b.ph = pet.rndf() * 6.28f; b.vx = b.vy = 0;
-        b.x0 = 3.0f + pet.rndf() * (MW - 14.0f);
-        if (kind == 1) { b.y = (float)MH; b.v = 5.0f * rush; }
-        else {   // a clear bubble hovers up in the poop's way, never on top of one
-          b.v = 0; b.y = 4.0f + pet.rndf() * 10.0f;   // (rows 0-2 hold the poop counter)
-          for (int j = 0; j < LB_N; j++) if (j != i && L.b[j].on && L.b[j].kind == 1 && fabsf(L.b[j].y - b.y) < 8.0f && fabsf(L.b[j].x0 - b.x0) < 8.0f) b.y = (float)MH - 22.0f + (b.y > 8 ? -2.0f : 0.0f);
-          for (int tries = 0; tries < 6; tries++) {   // and not on one of the middle/bottom ones
-            bool hit = false;
-            for (int j = 0; j < LB_N; j++) if (j != i && L.b[j].on && L.b[j].kind == 2 && fabsf(L.b[j].y - b.y) < 7.0f && fabsf(L.b[j].x0 - b.x0) < 9.0f) hit = true;
-            if (!hit) break;
-            b.x0 = 3.0f + pet.rndf() * (MW - 14.0f); b.y = 4.0f + pet.rndf() * 6.0f;
-          }
-        }
-        return;
-      }
-    };
-    const int clearCap = 8 + (L.got >= 2 ? 2 : 0) + (L.got >= 4 ? 2 : 0);   // a screenful of empty bubbles
-    const int lowCap = 6;   // plus more empty bubbles across the middle and bottom
-    if (L.n - L.got - afloat > 0 && afloat < (L.got >= 2 ? 2 : 1) && L.spawnT <= 0) { spawn(1, false, false); L.spawnT = 0.9f + pet.rndf() * 0.6f; }
-    if (L.decoyT <= 0 && (clear - low < clearCap || low < lowCap)) {   // the screen fills up at the start
-      spawn(0, low < lowCap && !L.lowFull, clear - low < clearCap);   // the middle/bottom ones first (they need free spots), then the top
-      L.decoyT = L.t < POOPUP_INTRO + 1.5f ? 0.08f : (0.5f + pet.rndf() * 0.4f) / rush;
-    }
-    // a tap pops the closest clear bubble (a poop bubble only if it's clearly the one you hit: that splats it)
-    if (in.pressed && inMatrix(in.px, in.py, dx, dy)) {
-      int best = -1; float bd = 5.2f * 5.2f;
-      for (int i = 0; i < LB_N; i++) {
-        int cx, cy; bool pp;
-        if (!lgBubble(i, cx, cy, pp)) continue;
-        const float d = (float)((cx - dx) * (cx - dx) + (cy - dy) * (cy - dy)) - (pp ? 0.0f : 8.0f);
-        if (d < bd) { bd = d; best = i; }
-      }
-      if (best >= 0) {
-        auto& b = L.b[best];
-        b.pop = 0.001f;
-        if (b.kind == 2) L.lowFull = false;
-        if (b.kind == 1) { L.misses++; L.missesTotal++; sound(SND_SPLAT); }   // splat: that one has to be redone
-        else sound(SND_BUBBLE);
-      } else sound(SND_TAP);
-    }
-  } else {
-    L.doneT += dt;
-    if (L.doneT > 1.0f) {   // every bubble gone: the score
-      L.result = true; L.doneT = 0;
-      const int hs = poopUpHearts(L.missesTotal);
-      pet.exercise(4.0f + 5.0f * hs, 6.0f, 0.3f + 0.2f * hs);
-      if (pet.d.evolving) pet.train(ACC_CLEAN, 0.1f * hs);
-      sv.lifeGames++;
-      sound(hs >= 3 ? SND_WIN : SND_SAD);
-      return;
-    }
-  }
-  // empty bubbles move for real: a gentle drift, friction, and when two overlap they ease apart; rims that meet
-  // bounce off each other (and off the edges, and off poop bubbles, which they never move)
-  {
-    const float R = 7.0f;                  // centre to centre when two rims touch (a bubble is 7 across)
-    const float damp = expf(-1.6f * dt);
-    for (int i = 0; i < LB_N; i++) {
-      auto& b = L.b[i];
-      if (!b.on || b.pop > 0 || b.kind == 1) continue;
-      b.vx += sinf(L.t * 2.0f + b.ph) * 5.0f * dt;   // the drift (used to be a fixed sway)
-      for (int j = 0; j < LB_N; j++) {
-        if (j == i) continue;
-        const auto& c = L.b[j];
-        if (!c.on || c.pop > 0) continue;
-        const float ddx = b.x0 - lgX(j), ddy = b.y - c.y, d = sqrtf(ddx * ddx + ddy * ddy);
-        const float touch = c.kind == 1 ? 6.5f : R;   // (just under 7 for poop bubbles: one parked under it is fine)
-        if (d >= touch) continue;
-        float nx = 1.0f, ny = 0.0f;
-        if (d > 0.01f) { nx = ddx / d; ny = ddy / d; } else { nx = (i < j) ? -1.0f : 1.0f; }
-        b.vx += nx * (touch - d) * 9.0f * dt;     // overlapping: ease apart
-        b.vy += ny * (touch - d) * 9.0f * dt;
-        const float cvx = c.kind == 1 ? 0.0f : c.vx, cvy = c.kind == 1 ? 0.0f : c.vy;
-        const float rel = (b.vx - cvx) * nx + (b.vy - cvy) * ny;
-        if (rel < 0) {                              // moving into it: bounce
-          const float k = c.kind == 1 ? 1.8f : 0.9f;   // (an equal bubble takes half the bounce: it gets its share in its own turn)
-          b.vx -= nx * rel * k; b.vy -= ny * rel * k;
-        }
-      }
-      const float sp = sqrtf(b.vx * b.vx + b.vy * b.vy);
-      if (sp > 6.0f) { b.vx *= 6.0f / sp; b.vy *= 6.0f / sp; }   // never a fast skid
-      b.vx *= damp; b.vy *= damp;
-      b.x0 += b.vx * dt; b.y += b.vy * dt;
-      if (b.x0 < 0.0f) { b.x0 = 0.0f; if (b.vx < 0) b.vx = -b.vx * 0.8f; }
-      if (b.x0 > (float)(MW - 7)) { b.x0 = (float)(MW - 7); if (b.vx > 0) b.vx = -b.vx * 0.8f; }
-      if (b.y < 3.0f) { b.y = 3.0f; if (b.vy < 0) b.vy = -b.vy * 0.8f; }               // (rows 0-2: the poop counter)
-      if (b.y > (float)(MH - 7)) { b.y = (float)(MH - 7); if (b.vy > 0) b.vy = -b.vy * 0.8f; }
-    }
-  }
-  // move them: poop bubbles rise until a clear bubble above them stops them; out of the top = cleaned
-  for (int i = 0; i < LB_N; i++) {
-    auto& b = L.b[i];
-    if (!b.on) continue;
-    if (b.pop > 0) { b.pop += dt; if (b.pop > 0.3f) b.on = false; continue; }
-    if (b.kind != 1) continue;
-    float ny = b.y - b.v * dt;
-    const float px = lgX(i);
-    for (int j = 0; j < LB_N; j++) {
-      const auto& c = L.b[j];
-      if (!c.on || c.pop > 0 || c.kind == 1) continue;
-      const float cx = lgX(j);
-      if (fabsf(cx - px) < 7.0f && b.y >= c.y + 6.0f && ny < c.y + 7.0f) ny = c.y + 7.0f;   // bumps into it from below
-    }
-    b.y = ny;
-    if (b.y < -8.0f) {
-      b.on = false;
-      if (!L.done) {
-        L.got++; sound(SND_HEART);   // floated away: cleaned
-        if (L.got == L.n) {
-          L.done = true; L.doneT = 0;
-          for (int j = 0; j < LB_N; j++) if (L.b[j].on && L.b[j].pop <= 0) L.b[j].pop = 0.001f;   // the rest burst
-          sound(SND_WIN);
-        }
-      }
-    }
-  }
-  // draw
-  for (int i = 0; i < LB_N; i++) {
-    const auto& b = L.b[i];
-    if (!b.on) continue;
-    const int bx = (int)lroundf(lgX(i)), by = (int)lroundf(b.y);
-    if (b.pop > 0) {                       // popping: a ring of drops flies out
-      const int r = 2 + (int)(b.pop * 14);
-      const int cx = bx + 3, cy = by + 3;
-      static const int8_t D[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, 1}, {1, -1}, {-1, -1}};
-      for (int k = 0; k < 8; k++) m_.set(cx + D[k][0] * r, cy + D[k][1] * r, b.kind == 1 ? SH_MID : SH_INK);
-      continue;
-    }
-    static const char* ring[7] = {"..XXX..", ".X...X.", "X.....X", "X.....X", "X.....X", ".X...X.", "..XXX.."};
-    const uint8_t sh = b.kind == 1 ? SH_MID : SH_INK;   // empty bubbles are dark (pop these), poop bubbles are greyed out
-    for (int yy = 0; yy < 7; yy++) for (int xx = 0; xx < 7; xx++) if (ring[yy][xx] == 'X') m_.set(bx + xx, by + yy, sh);
-    if (b.kind == 1) { m_.set(bx + 3, by + 2, SH_MID); m_.rect(bx + 2, by + 3, 3, 2, SH_MID); }   // the poop inside
-    else m_.set(bx + 2, by + 2, SH_MID);                                                         // a shine
-  }
-  {   // progress without words: one little poop per round, grey until its bubble floats away, then a faint dot
-    const int x0 = (MW - L.n * 4 + 1) / 2;
-    for (int i = 0; i < L.n; i++) {
-      const int x = x0 + i * 4;
-      if (i < L.got) m_.set(x + 1, 1, SH_FAINT);
-      else { m_.set(x + 1, 0, SH_MID); m_.rect(x, 1, 3, 2, SH_MID); }
-    }
   }
 }
 
@@ -739,7 +537,7 @@ void Game::mainInput() {
   int ic;
   if (iconTapped(ic)) { doIcon(ic); return; }
   int dx, dy;
-  if (in.longPress && inMatrix(in.px, in.py, dx, dy)) { sound(SND_MENU); setPage_ = 0; setScreen(S_SETTINGS); return; }
+  if (in.longPress && inMatrix(in.px, in.py, dx, dy)) { openSettings(); return; }
   if (sv.hasBlob && form() == F_DROPPER) {   // push the dropper (anywhere on the LCD): out comes the Lil Blob
     if (in.tap && inMatrix(in.px, in.py, dx, dy)) { squeezeOut(); sound(SND_POOF); }
     return;
@@ -769,7 +567,8 @@ void Game::mainInput() {
     consider(T_BLOB, (int)blobX_, FLOOR + 1 - h, spriteW(idle), h);
   }
   if (hasPet) {
-    if (pet.d.droppings) consider(T_BOX, BOX_X, FLOOR - 9, BOX_W, 10);   // the litter box: tap it to clean up
+    const int boxH = pet.d.droppings > 6 ? 10 + 2 * (pet.d.droppings - 6) : 10;   // (a tower of it is taller)
+    if (pet.d.droppings) consider(T_BOX, BOX_X, FLOOR + 1 - boxH, BOX_W, boxH);   // the litter box: tap it to clean up
     for (int i = 0; i < pet.d.floorMess && i < 4; i++) consider(T_BOX, BOX_X - 4 - i * 4, FLOOR - 2, 3, 3);   // mess in front
   }
   switch (best) {
@@ -824,7 +623,7 @@ void Game::screenMenu() {
     case 0: memset(&dg_, 0, sizeof dg_); setScreen(S_DODGE); break;   // MOVE (it was Dodge)
     case 1: memset(&rn_, 0, sizeof rn_); setScreen(S_RUN); break;
     case 2: startYeet(); break;
-    default: startPoopUp(); break;                                   // POP (it was Poop Up)
+    default: startPop(); break;                                      // POP: the bubble shooter (pop.cpp)
   }
   selIcon_ = IC_PLAY;
 }
@@ -858,100 +657,116 @@ void Game::drawSquish(int x, int y, int id, int w, int h, bool flip, uint8_t sic
     }
 }
 
-// Lil Blob and Lil Blub eat by absorbing: the food lands on the floor, they wobble over to it, stretch out to engulf it,
-// settle back with it inside, and then the view zooms in (2x) while it dissolves inside their body.
+// A sprite with extra dots let into it: `ew` columns in its side (between the face and the edge the food is on) and
+// `eh` rows in its belly (under the eyes). The face keeps its shape and the outline stays one dot thick, so a body
+// can reach out, or swell round a meal, without the eyes stretching (drawSquish scales everything).
+void Game::drawBelly(int x, int y, int id, int ew, int eh, bool flip) {
+  const Sprite& sp = SPRITES[id];
+  int eyeR = sp.h / 2;
+  for (int r = 0; r < sp.h; r++) for (int c = 0; c < sp.w; c++) if (sp.px[r * sp.w + c] == 2) eyeR = r;
+  const int splitR = eyeR + 1 < sp.h - 1 ? eyeR + 1 : sp.h - 2, splitC = sp.w - 3;
+  const int W2 = sp.w + ew, H2 = sp.h + eh;
+  for (int dy = 0; dy < H2; dy++)
+    for (int dx = 0; dx < W2; dx++) {
+      const int mx = flip ? W2 - 1 - dx : dx;
+      const int sx = mx <= splitC ? mx : mx <= splitC + ew ? splitC : mx - ew;
+      const int sy = dy <= splitR ? dy : dy <= splitR + eh ? splitR : dy - eh;
+      const uint8_t v = sp.px[sy * sp.w + sx];
+      if (v) m_.set(x + dx, y + dy, v == 4 ? SH_MID : SH_INK);
+    }
+}
+
+// The Lil Blob eats by absorbing, in one unbroken shot (no zoom, no cuts): the food lands on the floor, they wobble
+// over to it, a side of the body flows out over the food and closes round it, the rest of the body follows and
+// swells into a belly with the meal inside, under the eyes. There it dissolves dot by dot while the belly gurgles,
+// and they shrink back to their own size, content. The food never jumps: it stays where it landed, lifting a
+// little as the belly forms round it.
 void Game::drawAbsorb(float t) {
   int idle, alt, sl;
   blobSprite(form(), idle, alt, sl);
   const int bw = spriteW(idle), bh = spriteH(idle), by = FLOOR - bh;
   const int food = an_ == AN_EAT_SNACK ? SPR_SNACK : SPR_MEAL;
-  const int fw = spriteW(food), fh = spriteH(food), fy = FLOOR - fh;
+  const Sprite& fs = SPRITES[food];
+  const int fw = fs.w, fh = fs.h, fy = FLOOR - fh;
   // The food lands on the roomier side. If it lands close by, they hop back in surprise first, so there's a walk.
-  const int startX = clampi((int)blobX_, 0, MW - bw);
+  // (From where they stood when it began, not blobX_: that is moved to where they end up before the last frame is
+  // drawn, and laying the scene out again from there put the food, and them, on the other side for a frame.)
+  const int startX = clampi(eatFromX_, 0, MW - bw);
   const bool right = startX + bw / 2 < MW / 2;          // food on the right, so they walk right
-  const int fx0 = right ? MW - fw - 1 : 1;
+  const int fx0 = right ? MW - fw - 3 : 3;               // (room on its far side for the body to close round it)
   constexpr int GAP = 3;                                 // dots between them and the food when they stop
   const int stopX = right ? fx0 - GAP - bw : fx0 + fw + GAP;
   const int backX = right ? 1 : MW - bw - 1;             // where a startled hop back takes them
   const bool hopBack = abs(stopX - startX) < 10;
   const int walkFrom = hopBack ? backX : startX;
-  const int bigW = bw + 2 > fw + 5 ? bw + 2 : fw + 5, bigH = (bh > fh + 4 ? bh : fh + 4) + 1;   // the swollen body: bigger than the food in both directions
-  constexpr float T_HOP = 0.5f, T_WALK = 2.0f, T_REACH = 2.6f, T_ENGULF = 2.95f, T_PULL = 3.5f, T_IN = 3.65f, T_OUT = 5.2f, T_BACK = 5.35f;
-  if (t < T_IN || t >= T_BACK) {   // the normal view
+  // the belly: wide enough for the food with a dot to spare each side, tall enough to hold it under the eyes
+  const int bellyW = (fw + 4 > bw ? fw + 4 - bw : 0), bellyH = fh;        // extra columns / rows at its fullest
+  const int reachW = GAP + fw + 2;                                          // extra columns when it has flowed right over the food
+  const int endX = right ? fx0 + fw + 2 - bw : fx0 - 2;                     // where they end up: round where the food was
+  constexpr float T_HOP = 0.5f, T_WALK = 2.0f, T_REACH = 2.35f, T_ENGULF = 2.75f, T_PULL = 3.35f, T_DONE = 5.3f;
+  auto ease = [](float k) { k = k < 0 ? 0 : k > 1 ? 1 : k; return k * k * (3 - 2 * k); };
+  if (t < T_WALK) {
     if (t < T_HOP && hopBack) {      // boing: a startled hop back, away from the food
       const float k = t / T_HOP;
       drawBlob(startX + (int)((backX - startX) * k), by - (int)(4 * sinf(k * 3.14159f)), right, 0, true);
       if (t < 0.3f) m_.small(clampi(startX + bw / 2 - 1, 0, MW - 3), clampi(by - 9, 0, MH), "!");
-    } else if (t < T_WALK) {        // a slow wobble over, a dot at a time
+    } else {                         // a slow wobble over, a dot at a time
       const float k = (t - (hopBack ? T_HOP : 0)) / (T_WALK - (hopBack ? T_HOP : 0));
       drawBlob(walkFrom + (int)((stopX - walkFrom) * k), by - (((int)(t * 5)) & 1), !right, 0, ((int)(t * 5)) & 1);
-    } else if (t >= T_BACK) drawBlob(stopX, by, !right, 1, false);   // full and content at the end, eyes shut
-    if (t >= T_WALK && t < T_IN) {
-      // the body stretches toward the food, then swells up around it and draws back with it inside, bigger than the food
-      const int wReach = bw + GAP + 2, wFull = bw + GAP + fw + 1, wHome = bigW;
-      const int hReach = bh - 1, hFull = bigH - 1, hHome = bigH;
-      int sw, sh;
-      if (t < T_REACH) { const float k = (t - T_WALK) / (T_REACH - T_WALK); sw = bw + (int)((wReach - bw) * k); sh = bh - (int)(k * 1.0f); }
-      else if (t < T_ENGULF) { const float k = (t - T_REACH) / (T_ENGULF - T_REACH); sw = wReach + (int)((wFull - wReach) * k); sh = hReach + (int)((hFull - hReach) * k + 0.5f); }
-      else if (t < T_PULL) { const float k = (t - T_ENGULF) / (T_PULL - T_ENGULF); sw = wFull + (int)((wHome - wFull) * k); sh = hFull + (int)((hHome - hFull) * k + 0.5f); }
-      else { sw = wHome; sh = hHome; }
-      const int bx = right ? stopX : stopX + bw - sw;
-      drawSquish(bx, FLOOR - sh, idle, sw, sh, !right);
-      int fx = fx0, fyy = fy;
-      if (t >= T_ENGULF) {   // the food drifts to the middle of the body as it draws back
-        const float k = clampi((int)((t - T_ENGULF) / (T_PULL - T_ENGULF) * 100), 0, 100) / 100.0f;
-        fx = fx0 + (int)((bx + W / 2 - fw / 2 - fx0) * k);
-        fyy = fy + (int)((FLOOR - H / 2 - fh / 2 - fy) * k);
-      }
-      m_.sprite(fx, t < T_ENGULF ? fy : fyy, food);   // on top of the body: it's inside
-      if (t - dt < T_ENGULF && t >= T_ENGULF) sound(SND_GULP);
-    } else if (t < T_WALK) {
-      m_.sprite(fx0, fy - (t < 0.25f ? (int)((0.25f - t) * 40) : 0), food);   // it drops in
     }
-    if (t >= T_IN - 0.15f && t < T_IN) {   // the zoom closes in on them
-      const int bcx = stopX + bw / 2;
-      const float k = (t - (T_IN - 0.15f)) / 0.15f;
-      const int x0 = (int)(k * (stopX - 2)), x1 = MW - 1 - (int)(k * (MW - 1 - (stopX + bw + 1)));
-      const int y0 = (int)(k * (by - 2)), y1 = MH - 1;
-      (void)bcx;
-      for (int x = x0; x <= x1; x++) { m_.set(x, y0, SH_INK); m_.set(x, y1, SH_INK); }
-      for (int y = y0; y <= y1; y++) { m_.set(x0, y, SH_INK); m_.set(x1, y, SH_INK); }
-    } else if (t >= T_BACK && t < T_BACK + 0.6f && ((int)(t * 6) & 1)) {
-      m_.sprite(clampi(right ? stopX + bw : stopX - 3, 0, MW - 3), clampi(by - 3, 0, MH), SPR_SPARK);
-    }
-    if (t >= anLen_ - dt * 1.5f) { blobX_ = blobTx_ = (float)stopX; faceLeft_ = !right; }   // they stay where they ate
+    m_.sprite(fx0, fy - (t < 0.25f ? (int)((0.25f - t) * 40) : 0), food);   // it drops in
     return;
   }
-  // zoomed in, 2x: the food sits inside the body for a moment, then it softens and dissolves in place; a few motes rise
-  // 2x, or 1.5x for a tall fella so the zoomed body keeps a margin above and below (it used to fill the whole screen height)
-  const int zn = (bigH * 2 > MH - 6 || bigW * 2 > MW - 4) ? 3 : 4;   // body scale = zn/2
-  const int s = zn == 4 ? 2 : 1;                                       // the food is drawn smaller inside a 1.5x body
-  const float d = (t - T_IN) / (T_OUT - T_IN);   // 0 -> 1: how far it has dissolved
-  // the swollen body slowly settles back to its own size as the food goes
-  const float settle = d < 0.55f ? 0.0f : (d - 0.55f) / 0.45f;
-  const int zw = (int)((bigW + (bw - bigW) * settle) * zn / 2 + 0.5f), zh = (int)((bigH + (bh - bigH) * settle) * zn / 2 + 0.5f);
-  const int zx = (MW - zw) / 2, zy = MH - zh - 3;
-  drawSquish(zx, zy, idle, zw, zh, false);
-  const Sprite& fs = SPRITES[food];
-  const int fx = zx + zw / 2 - fs.w * s / 2, fyz = zy + zh / 2 - fs.h * s / 2;   // the food in the middle of the body
-  for (int r = 0; r < fs.h; r++) for (int c = 0; c < fs.w; c++) {
-    if (!fs.px[r * fs.w + c]) continue;
-    uint32_t hx = (uint32_t)(r * fs.w + c + 1) * 0x9E3779B1u; hx ^= hx >> 15; hx *= 0x85EBCA6Bu; hx ^= hx >> 13;   // scrambled, so the bits left over never line up into shapes (they used to read "54")
-    const float h = 0.3f + (hx & 15) / 16.0f * 0.5f;   // when this bit of food starts to go (after a pause)
-    const int px = fx + c * s, py = fyz + r * s;
-    if (d < h) m_.rect(px, py, s, s, SH_INK);
-    else if (d < h + 0.1f) m_.rect(px, py, s, s, SH_MID);   // soft, then gone
+  if (t >= T_DONE) {                 // full and content, eyes shut, where the food was
+    drawBlob(endX, by, !right, 1, false);
+    if (t < T_DONE + 0.6f && ((int)(t * 6) & 1)) m_.sprite(clampi(right ? endX - 3 : endX + bw, 0, MW - 3), clampi(by - 3, 0, MH), SPR_SPARK);
+    blobX_ = blobTx_ = (float)endX; faceLeft_ = !right;   // they stay where they ate
+    return;
   }
-  if (d > 0.35f && d < 0.95f) for (int i = 0; i < 3; i++) {   // a few motes rise through the body
-    const float a = (d - 0.35f) / 0.6f;
-    m_.set(zx + zw / 2 + (i - 1) * 4, zy + zh / 2 - (int)(a * 4) - (i & 1), SH_MID);
+  // from here to T_DONE the body is drawn with drawBelly: ew extra columns, eh extra rows
+  int ew = 0, eh = 0, lift = 0;
+  bool nearFixed = false;            // which side stays put: the far one while reaching, the food's side after that
+  float d = -1;                      // digesting: 0 -> 1
+  if (t < T_REACH) ew = (int)lroundf(GAP * ease((t - T_WALK) / (T_REACH - T_WALK)));               // a side of the body reaches the food
+  else if (t < T_ENGULF) {                                                                             // ...flows over it and closes round it
+    const float k = ease((t - T_REACH) / (T_ENGULF - T_REACH));
+    ew = GAP + (int)lroundf((reachW - GAP) * k); eh = (int)lroundf(1.0f * k);
+  } else if (t < T_PULL) {                                                                             // the rest of the body follows: a belly, the food in it
+    const float k = ease((t - T_ENGULF) / (T_PULL - T_ENGULF));
+    ew = reachW + (int)lroundf((bellyW - reachW) * k); eh = 1 + (int)lroundf((bellyH - 1) * k);
+    lift = (int)lroundf(2 * k); nearFixed = true;
+  } else {                                                                                             // digesting
+    d = (t - T_PULL) / (T_DONE - T_PULL);
+    const float shrink = d < 0.72f ? 0.0f : ease((d - 0.72f) / 0.28f);                              // back to their own size once it's gone
+    ew = (int)lroundf(bellyW * (1 - shrink)); eh = (int)lroundf(bellyH * (1 - shrink));
+    lift = 2; nearFixed = true;
   }
-  if (t > T_OUT) {   // zooming back out
-    const float k = 1 - (t - T_OUT) / (T_BACK - T_OUT);
-    const int x0 = (int)(k * 3), x1 = MW - 1 - (int)(k * 3), y0 = (int)(k * 3);
-    for (int x = x0; x <= x1; x++) m_.set(x, y0, SH_INK);
-    for (int y = y0; y < MH; y++) { m_.set(x0, y, SH_INK); m_.set(x1, y, SH_INK); }
+  const bool gurgle = d >= 0 && d < 0.72f && ((int)(t * 5) & 1);   // the belly gurgles: a dot wider each side and a dot flatter, and back
+  if (gurgle) { ew += 2; eh -= 1; }
+  const int W2 = bw + ew, H2 = bh + eh;
+  int bx;
+  if (nearFixed) bx = right ? fx0 + fw + 2 - W2 : fx0 - 2;
+  else bx = right ? stopX : stopX + bw - W2;
+  if (gurgle) bx += right ? 1 : -1;
+  drawBelly(bx, FLOOR - H2, idle, ew, eh, !right);
+  // the food: whole until it's in the belly, then it goes soft and dissolves, each dot in its own time
+  for (int r = 0; r < fh; r++) for (int c = 0; c < fw; c++) {
+    if (!fs.px[r * fw + c]) continue;
+    uint8_t sh = SH_INK;
+    if (d >= 0) {
+      uint32_t hx = (uint32_t)(r * fw + c + 1) * 0x9E3779B1u; hx ^= hx >> 15; hx *= 0x85EBCA6Bu; hx ^= hx >> 13;   // scrambled, so the bits left over never line up into shapes
+      const float gone = 0.12f + (hx & 15) / 16.0f * 0.45f;   // when this dot starts to go
+      if (d >= gone + 0.1f) continue;
+      if (d >= gone) sh = SH_MID;
+    }
+    m_.set(fx0 + c, fy - lift + r, sh);
   }
+  if (d > 0.2f && d < 0.8f) for (int i = 0; i < 2; i++) {   // little bubbles rise off them as it goes down
+    const float a = fmodf((d - 0.2f) * 3.0f + i * 0.5f, 1.0f);
+    m_.set(bx + W2 / 2 + (i ? 3 : -2) + (((int)(a * 6)) & 1), FLOOR - H2 - 1 - (int)(a * 5), SH_MID);
+  }
+  if (t - dt < T_ENGULF && t >= T_ENGULF) sound(SND_GULP);
+  if (d >= 0.3f && (t - dt - T_PULL) / (T_DONE - T_PULL) < 0.3f) sound(SND_BUBBLE);
 }
 
 void Game::screenAnim() {
@@ -998,11 +813,20 @@ void Game::screenAnim() {
       break;
     }
     case AN_MEDS: {
-      const int cx = 4;
+      const int cx = w > MW - 12 ? MW - 8 - w : 4;   // (the very widest squeeze up against the wall to leave room for it)
       drawBlob(cx, cy, false, t > 1.2f ? 1 : 0, false);
-      const float k = t < 1.2f ? t / 1.2f : 1.0f;
-      const int sx = (int)(MW - (MW - (cx + w + 1)) * k);
-      m_.sprite(sx, FLOOR - 8, SPR_SYRINGE);
+      // The needle goes to where their side really is: the dot of them furthest right at the needle's height, or
+      // at the nearest height they have any (a short fella is jabbed lower down). It comes in until it touches
+      // them, then goes in by a dot.
+      int ny = FLOOR - 6, nx = -1;
+      for (int k = 0; k < 2 * MH && nx < 0; k++) {   // FLOOR - 6, then a row lower, a row higher, two lower...
+        const int y = FLOOR - 6 + ((k & 1) ? (k + 1) / 2 : -(k / 2));
+        if (y < 0 || y > FLOOR) continue;
+        for (int x = MW - 1; x >= 0 && nx < 0; x--) if (m_.get(x, y)) { nx = x; ny = y; }
+      }
+      if (nx < 0) nx = cx + w - 1;
+      const int sx = t < 1.0f ? MW - (int)((MW - (nx + 1)) * t) : t < 1.1f ? nx + 1 : nx;
+      m_.sprite(sx, ny - 2, SPR_SYRINGE);
       if (t > 1.2f && ((int)(t * 6) & 1)) m_.sprite(clampi(cx + w, 0, MW - 3), clampi(cy - 3, 0, MH), SPR_SPARK);
       if (t >= 1.2f && t - dt < 1.2f) sound(SND_SPARKLE);   // it's working
       break;
@@ -1215,27 +1039,23 @@ void Game::screenMeter() {
     case 0: {
       char nm[11]; strncpy(nm, d.name, 10); nm[10] = 0;
       for (char* p = nm; *p; p++) if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 32);
-      m_.smallCenter(1, nm);
+      m_.smallCenter(2, nm);
       {   // "AGE 5 HRS": the unit sits a few dots away from the number
         const char* unit = d.age < DAY ? "HRS" : "D";
         snprintf(b, sizeof b, "AGE %d", d.age < DAY ? (int)(d.age / HOUR) : (int)(d.age / DAY));
         const int uw = Matrix::smallWidth(unit), gap = 4;
         const int tw = Matrix::smallWidth(b) + gap + uw;
         const int x0 = (MW - tw) / 2;
-        m_.small(x0, 8, b);
-        m_.small(x0 + tw - uw, 8, unit);
+        m_.small(x0, 10, b);
+        m_.small(x0 + tw - uw, 10, unit);
       }
-      {   // the device's battery: how much charge is left ("+" while it's charging)
+      {   // the device's battery: the percentage, nothing else ("+" while it's charging)
         const int pct = plat->batteryPercent();
-        if (pct < 0) m_.smallCenter(15, "BATT -");
+        if (pct < 0) m_.smallCenter(18, "BATT -");
         else {
           snprintf(b, sizeof b, "BATT %d%%%s", pct > 100 ? 100 : pct, plat->batteryCharging() ? "+" : "");
-          m_.smallCenter(15, b);
+          m_.smallCenter(18, b);
         }
-        const int lit = pct < 0 ? 0 : pct >= 100 ? 10 : (pct + 9) / 10;   // 10 segments; the last one stays lit down to 1%
-        m_.rect(3, 20, 33, 1, SH_INK); m_.rect(3, 24, 33, 1, SH_INK); m_.rect(3, 20, 1, 5, SH_INK); m_.rect(35, 20, 1, 5, SH_INK);   // the cell...
-        m_.rect(36, 21, 1, 3, SH_INK);                                                                                              // ...and its nub
-        for (int i = 0; i < lit; i++) m_.rect(5 + i * 3, 21, 2, 3, SH_INK);
       }
       break;
     }
@@ -1330,7 +1150,7 @@ void Game::screenDodge() {
         g.phase = 2; g.score = g.t; g.t = 0; g.hitX = (int)it.x; it.on = false;
         sound(SND_GRUMBLE);
         const int hs = dodgeHearts(g.score);
-        pet.exercise(4.0f + 6.0f * hs, 8.0f, 0.4f + 0.3f * hs);
+        pet.exercise(4.0f + 6.0f * hs, 0.4f + 0.3f * hs);
         if (pet.d.evolving) pet.train(ACC_SPEED, 0.15f * hs);
         sv.lifeGames++;
         if (g.score > dodgeBest_) dodgeBest_ = g.score;
@@ -1398,7 +1218,11 @@ void Game::runStep(float dtReal, bool press, bool sim) {
         if (r.t > 12) pool[n++] = 5;
         if (r.t > 16) { pool[n++] = 4; pool[n++] = 3; }
         int kind = pool[pet.rnd() % n];
-        if (r.t > 10 && r.boost <= 0 && ++r.sinceP >= 6 && pet.rnd() % 3 == 0) { kind = 6; r.sinceP = 0; }
+        // power-ups: never in the same place twice. How many things go by before the next one is drawn fresh each
+        // time (2-9, so the first can come within seconds or not for a while), and so are its height and how far
+        // out it sits (below).
+        if (r.nextP <= 0) r.nextP = 2 + (int)(pet.rnd() % 8);
+        if (r.t > 3 && r.boost <= 0 && ++r.sinceP >= r.nextP) { kind = 6; r.sinceP = 0; r.nextP = 2 + (int)(pet.rnd() % 8); }
         if (!r.wallDone && r.dist / 4.0f > 120) {   // the 4th heart needs a tall wall: if none is on the way, send one
           bool wallComing = false;
           for (int k = 0; k < 6; k++) if (r.ob[k].on && r.ob[k].kind == 5) wallComing = true;
@@ -1412,7 +1236,14 @@ void Game::runStep(float dtReal, bool press, bool sim) {
           case 3: o.w = (uint8_t)(9 + pet.rnd() % 5); o.h = 0; break;
           case 4: o.w = 11; o.h = 6; o.by = (uint8_t)h; break;      // flies just over a standing head
           case 5: o.w = 4; o.h = 13; break;
-          default: o.w = 5; o.h = 5; o.by = (uint8_t)(h + 2); break;
+          default: {   // the power-up: on the ground (run into it), a jump up, or high up (a well-timed jump, or a double)
+            static const uint8_t TIER[6] = {0, 1, 1, 2, 2, 1};
+            const int tier = TIER[pet.rnd() % 6], hi = h + 7 < 21 ? h + 7 : 21;
+            o.w = 5; o.h = 5;
+            o.by = (uint8_t)(tier == 0 ? 1 : tier == 1 ? h + 1 + (int)(pet.rnd() % 3) : hi - (int)(pet.rnd() % 2));
+            o.x = (float)(MW + (int)(pet.rnd() % 13));   // and a random way further out
+            break;
+          }
         }
         // always room to land (a double jump takes longer) and see what comes next; later runs leave less spare room
         const float diff = r.t > 40 ? 1.0f : r.t / 40.0f;
@@ -1448,7 +1279,7 @@ void Game::runStep(float dtReal, bool press, bool sim) {
         if (!sim) {
           sound(SND_GRUMBLE);
           const int hs = runHearts(r.score, r.wallDone);
-          pet.exercise(4.0f + 6.0f * hs, 8.0f, 0.4f + 0.3f * hs);
+          pet.exercise(4.0f + 6.0f * hs, 0.4f + 0.3f * hs);
           if (pet.d.evolving) pet.train(ACC_SPEED, 0.15f * hs);
           sv.lifeGames++;
           if (r.score > runBest_) runBest_ = r.score;
@@ -1468,7 +1299,17 @@ void Game::screenRun() {
   int ic;
   if (r.phase < 2 && iconTapped(ic) && ic >= 4) { doIcon(ic); return; }
   char b[16];
-  if (r.phase == 0) { memset(&r, 0, sizeof r); r.next = 40; r.phase = 1; }
+  if (r.phase == 0) { memset(&r, 0, sizeof r); r.next = 40; r.phase = 1; r.card = RUN_CARD_SECS; }
+  if (r.card > 0) {   // the card: how to play, before anything comes at them (a tap starts the run, or it starts by itself)
+    m_.smallCenter(1, "TAP = JUMP");
+    for (int x = 2; x < MW - 2; x += 2) m_.set(x, 8, SH_MID);
+    m_.smallCenter(11, "TAP IN AIR");
+    m_.smallCenter(17, "= DOUBLE");
+    m_.smallCenter(23, "JUMP");
+    r.card -= dt;
+    if (in.tap && r.card < RUN_CARD_SECS - 0.3f) { r.card = 0; sound(SND_TAP); }
+    return;
+  }
   runStep(dt, in.pressed, false);
   const bool boosted = r.boost > 0;
   // the ground, scrolling, with holes cut out of it
@@ -1587,7 +1428,7 @@ void Game::orbitStep(float dtReal, bool tap, bool sim) {
     o.phase = 3; o.t = 0;
     if (!sim) {
       const int hs = orbitHearts(o.stars);
-      pet.exercise(5.0f + 5.0f * hs, 2.0f, 0.2f * hs);
+      pet.exercise(5.0f + 5.0f * hs, 0.2f * hs);
       sv.lifeGames++;
       if (o.stars > orbitBest_) orbitBest_ = o.stars;
       sound(hs >= 3 ? SND_WIN : SND_LOSE);
@@ -1724,7 +1565,6 @@ void Game::screenEvolve() {
   m_.sprite((MW - w) / 2, FLOOR - h - (bob ? 1 : 0), idle);
   m_.sprite(0, 12, SPR_ARROW_R, true);
   m_.sprite(MW - 3, 12, SPR_ARROW_R);
-  for (int i = 0; i < n; i++) m_.set(MW / 2 - n + i * 2, MH - 1, i == evoSel_ ? SH_INK : SH_MID);
   int dx, dy;
   if (scrT_ < 0.5f) return;   // a moment to see it before a tap counts
   if (!in.tap || !inMatrix(in.px, in.py, dx, dy)) return;
@@ -1744,8 +1584,8 @@ void Game::screenEvolve() {
 // ---------------------------------------------------------------------------------------------
 void Game::screenEnding() {
   // Every life ends the same way: they melt into a puddle of goo and the dropper comes down over it. Then it's up to
-  // you: squeeze the bulb and let go, three times, to suck the puddle up. It rises; shake the device to shake the
-  // dropper (three shakes). Then one tap squeezes out a new blob.
+  // you: squeeze the bulb and let go, three times, to suck the puddle up. The dropper rises and the name page opens;
+  // "Let's goo!" leads to the opening scene, where one tap squeezes out the new blob.
   int idle, alt, sl;
   blobSprite(form(), idle, alt, sl);
   const int w = spriteW(idle), h = spriteH(idle), cy = FLOOR - h;
@@ -1756,7 +1596,6 @@ void Game::screenEnding() {
   const int lowY = FLOOR - 1 - dh;                                         // dropper's tip just above the puddle
   constexpr float T_MELT = 0.8f, T_POOL = 3.2f, T_SUCK = 2.0f, T_UP = ENDING_UP_AT;   // T_SUCK / T_UP: after the last squeeze
   const bool waiting = t >= ENDING_WAIT_AT && suckAt_ < 0;                 // the dropper is down, waiting for you
-  if (shakeFlash_ > 0) shakeFlash_ -= dt;
 
   // your finger: press squeezes the bulb, letting go sucks some goo up
   int dx, dy;
@@ -1768,12 +1607,10 @@ void Game::screenEnding() {
     }
   }
   if (t >= T_MELT && t - dt < T_MELT) sound(SND_MELT);                     // they start to melt
-  if (suckAt_ >= 0 && t - suckAt_ >= T_UP && t - dt - suckAt_ < T_UP) sound(SND_COO_SOFT);   // up top: shake me
   const float s = suckAt_ < 0 ? -1 : t - suckAt_;                          // seconds since the last squeeze
-  const bool shakePhase = s >= T_UP && dispAt_ < 0 && endShakes_ < ENDING_SHAKES;
-  const bool readyPhase = s >= T_UP && endShakes_ >= ENDING_SHAKES && dispAt_ < 0;
-  const bool tapFallback = shakePhase && s > T_UP + 15.0f;                 // (no working motion sensor: taps count too)
-  if (tapFallback && in.tap && inMatrix(in.px, in.py, dx, dy)) { endShakes_++; shakeFlash_ = 0.4f; sound(SND_TAP); }
+  // The dropper is back up top with the goo inside: on to the name page. It waits for a finger still on the glass to
+  // lift first, so a press that began here can't land on a key there.
+  if (s >= T_UP && !in.down) { pickName(); setScreen(S_SETUP_NAME); return; }
 
   int pool = 0;                                                            // puddle half-width
   const int full = w / 2 + 4;
@@ -1817,26 +1654,10 @@ void Game::screenEnding() {
       const int up = ENDING_PULLS - 1 + (int)(s / T_SUCK * 3);
       for (int i = 0; i < up; i++) m_.set(tipX, y + dh - 2 - i, SH_MID);
     } else if (s < T_UP) y = lowY - (int)((s - T_SUCK) / (T_UP - T_SUCK) * (lowY - 2));
-    else {
-      y = 2;
-      if (shakeFlash_ > 0) { x += ((int)(t * 24) & 1) ? 2 : -2; if ((int)(t * 12) & 1) { m_.sprite(x - 4, 6, SPR_SPARK); m_.sprite(x + dw + 1, 9, SPR_SPARK); } }   // it jiggles with your shake
-      if (dispAt_ < 0) for (int i = 0; i < 4; i++) m_.set(tipX, y + dh - 2 - i, SH_MID);                                                                              // full of goo
-      if (readyPhase) { const int g = 1 + (int)(fmodf(t, 1.0f) * 2); m_.rect(tipX - 1, y + dh, 3, g + 1, SH_INK); }                                                      // a drop swelling at the tip
-    }
+    else y = 2;                                                            // up top (a finger is still down: see above)
+    if (s >= T_SUCK) for (int i = 0; i < 4; i++) m_.set(tipX, y + dh - 2 - i, SH_MID);   // full of goo
     m_.sprite(x, y, spr);
-    if (shakePhase) {
-      if (fmodf(t, 0.8f) < 0.55f) m_.smallCenter(MH - 5, tapFallback ? "TAP=SHAKE" : "SHAKE!");
-      for (int i = 0; i < ENDING_SHAKES; i++) m_.rect(1 + i * 3, 1, 2, 2, i < endShakes_ ? SH_INK : SH_MID);
-    }
-    if (readyPhase && fmodf(t, 0.8f) < 0.55f) m_.smallCenter(MH - 5, "TAP");
-    if (dispAt_ >= 0) {                                                    // the new blob drops out
-      const float k = (t - dispAt_) / 0.6f;
-      const int dyy = y + dh + (int)(k * (FLOOR - (y + dh)));
-      m_.rect(tipX - 1, clampi(dyy, 0, FLOOR - 2), 3, 3, SH_INK);
-      if (k >= 1.0f) { pickName(); setScreen(S_SETUP_NAME); }
-    }
   }
-  if (readyPhase && in.tap && inMatrix(in.px, in.py, dx, dy)) { dispAt_ = t; sound(SND_BOING); }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1848,14 +1669,14 @@ void Game::debugAct(int which) {
   switch (which) {
     case 0: case 1: { bool o; pet.d.hunger = 30; pet.feed(which ? FOOD_TREAT : FOOD_KIBBLE, o); startAnim(which ? AN_EAT_SNACK : AN_EAT_MEAL, eatSecs()); break; }
     case 2: startScrub(); break;
-    case 13: startPoopUp(); break;
+    case 13: startPop(); break;
     case 14: startYeet(); break;
     case 3: if (an_ != AN_MEDS) { pet.vetVisit(); startAnim(AN_MEDS, MEDS_SECS, pet.sickStack()); } break;
     case 5: memset(&dg_, 0, sizeof dg_); setScreen(S_DODGE); break;
     case 11: memset(&rn_, 0, sizeof rn_); setScreen(S_RUN); break;
     case 12: memset(&orb_, 0, sizeof orb_); setScreen(S_ORBIT); break;
     case 6: meterPage_ = 0; setScreen(S_METER); break;
-    case 7: setPage_ = 0; setScreen(S_SETTINGS); break;
+    case 7: setFrom_ = S_MAIN; setPage_ = 0; setScreen(S_SETTINGS); break;
     case 8: if (pet.d.age < DROP_AGE) squeezeOut(); break;   // squeeze the dropper
     case -1: setScreen(S_MAIN); break;
     default: break;

@@ -15,8 +15,10 @@ static void yHearts(Matrix& m, int y, int n) { for (int i = 0; i < 4; i++) m.spr
 // ---------------------------------------------------------------------------------------------
 // CLEAN: scrub it. A long litter box fills the screen, with any mess on the floor at its left. Rub a finger back and
 // forth: suds build up where you rub and the poop nearest your finger wears away. Every poop is different - its
-// shape, where it lies, and how stuck-on it is: tough ones (crusty, then with flies) take up to 5 times the rubbing
-// of an easy one. There's no way to fail. (All easy: about 3 s of brisk scrubbing for a little, 5 s for a lot.)
+// shape, where it lies, and how stuck-on it is: tough ones (crusty, then with flies) take up to twice the rubbing
+// of an easy one. There's no way to fail. Every poop they've done since the last clean is there (up to BOX_MAX in the
+// box, piled three deep, and 4 on the floor), and each one is more to scrub: about 2 s of brisk scrubbing for one easy
+// poop and a second more for every other, so a box left to fill up is a 15 to 30 s job.
 // ---------------------------------------------------------------------------------------------
 namespace {
 constexpr int BOX_X0 = 11;   // the box: from here to the right edge (the floor in front of it, at the left)
@@ -32,40 +34,57 @@ uint32_t dotHash(int i, int x, int y) { uint32_t h = (uint32_t)(i * 73856093) ^ 
 
 void Game::startScrub() {
   Scrub& S = sc_;
+  // A scrub that was left half done is picked up where it stopped: the same poops, as worn away as they were.
+  // (Kept until it's finished, a new blob arrives or the device restarts. Poops done since then join them, fresh.)
+  const Scrub old = S;
+  const bool resume = old.np > 0 && !old.done;
   memset(&S, 0, sizeof S);
-  S.box = pet.d.droppings > 6 ? 6 : pet.d.droppings;
+  S.box = pet.d.droppings > BOX_MAX ? BOX_MAX : pet.d.droppings;
   S.floor = pet.d.floorMess > 4 ? 4 : pet.d.floorMess;
   if (!S.box && !S.floor) { sound(SND_PAGE); say("ALL CLEAN"); setScreen(S_MAIN); return; }
   const int n = S.box + S.floor;
-  S.base = 330.0f + 25.0f * n;   // the rubbing it takes when every poop is an easy one (dots, at most 4 a frame count)
-  // in the box: spread along it, a second layer on top when it's full
-  const int perRow = S.box > 3 ? (S.box + 1) / 2 : S.box;
+  S.base = 200.0f + 110.0f * (n - 1);   // the rubbing it takes when every poop is an easy one (dots, at most 4 a frame count): more poops, more rubbing
+  // the poop that was the k-th in the box (or on the floor) last time, if there was one
+  auto before = [&](int k, bool onFloor) -> decltype(&old.poo[0]) {
+    if (!resume || k >= (onFloor ? old.floor : old.box)) return nullptr;
+    const int oi = onFloor ? old.box + k : k;
+    return oi < old.np ? &old.poo[oi] : nullptr;
+  };
+  const bool same = resume && old.box == S.box && old.floor == S.floor;   // nothing new since: everything exactly where it was
+  // in the box: spread along it, then a second layer and a third on top (each a little narrower: a heap)
+  const int perRow = S.box <= 3 ? S.box : S.box <= 8 ? (S.box + 1) / 2 : 4;
   for (int i = 0; i < S.box; i++) {
     auto& p = S.poo[S.np++];
-    p.shape = (uint8_t)(pet.rnd() % 4);
+    const auto* o = before(i, false);
+    p.shape = o ? o->shape : (uint8_t)(pet.rnd() % 4);
     const PooShape& sh = POO_SHAPES[p.shape];
-    const int row = i < perRow ? 0 : 1, col = row ? i - perRow : i, cols = row ? S.box - perRow : perRow;
-    const int span = MW - 2 - (BOX_X0 + 2), slot = span / (cols ? cols : 1);
-    const int cx = BOX_X0 + 2 + slot * col + slot / 2 + (int)(pet.rnd() % 3) - 1;
+    const int row = i / perRow, col = i % perRow, left = S.box - row * perRow, cols = left < perRow ? left : perRow, inset = row * 3;
+    const int span = MW - 2 - (BOX_X0 + 2) - 2 * inset, slot = span / (cols ? cols : 1);
+    const int cx = BOX_X0 + 2 + inset + slot * col + slot / 2 + (int)(pet.rnd() % 3) - 1;
     p.x = (int8_t)clampi(cx - sh.w / 2, BOX_X0 + 1, MW - 1 - sh.w);
-    p.y = (int8_t)(FLOOR - sh.h - (row ? 4 : 0) - (int)(pet.rnd() % 2));
+    p.y = (int8_t)(FLOOR - sh.h - row * 4 - (int)(pet.rnd() % 2));
+    if (o && same) { p.x = o->x; p.y = o->y; }
   }
   // on the floor, in front of the box: the smaller shapes
   static const int8_t FL[4][2] = {{0, 23}, {5, 23}, {2, 18}, {6, 14}};
   for (int i = 0; i < S.floor; i++) {
     auto& p = S.poo[S.np++];
-    p.shape = (uint8_t)(pet.rnd() % 2);
+    const auto* o = before(i, true);
+    p.shape = o ? o->shape : (uint8_t)(pet.rnd() % 2);
     p.x = FL[i][0]; p.y = (int8_t)(FL[i][1] + 3 - POO_SHAPES[p.shape].h);
   }
   // how stuck-on each one is: mostly easy, now and then a tough one
-  static const uint8_t TOUGH[10] = {1, 1, 1, 1, 1, 2, 2, 3, 4, 5};   // (on average about twice the easy rubbing)
+  static const uint8_t TOUGH[10] = {1, 1, 1, 1, 1, 2, 2, 3, 4, 5};   // (each step is a quarter more rubbing: 5 is twice an easy one)
   S.need = 0;
   for (int i = 0; i < S.np; i++) {
     auto& p = S.poo[i];
-    p.tough = TOUGH[pet.rnd() % 10];
-    p.hp0 = p.hp = S.base / n * p.tough;
+    const auto* o = before(i < S.box ? i : i - S.box, i >= S.box);
+    p.tough = o ? o->tough : TOUGH[pet.rnd() % 10];
+    p.hp0 = p.hp = S.base / n * (1.0f + 0.25f * (p.tough - 1));
+    if (o) p.hp = o->hp0 > 0 && o->hp > 0 ? p.hp0 * o->hp / o->hp0 : 0;   // as worn down as it was (scrubbed away stays away)
     S.need += p.hp0;
   }
+  if (resume) S.prog = old.prog;   // (so "SCRUB!" isn't flashed again)
   selIcon_ = IC_LITTER;
   setScreen(S_SCRUB);
 }
@@ -74,7 +93,7 @@ void Game::screenScrub() {
   Scrub& S = sc_;
   S.t += dt;
   int ic;
-  if (iconTapped(ic)) {   // leaving before it's clean: nothing's cleaned
+  if (iconTapped(ic)) {   // leaving before it's clean: nothing's cleaned yet, but the scrubbing done so far is kept (startScrub)
     if (ic == IC_LITTER) { sound(SND_BACK); setScreen(S_MAIN); }
     else doIcon(ic);
     return;
@@ -142,6 +161,7 @@ void Game::screenScrub() {
     if (!left) {   // clean!
       S.done = true; S.doneT = 0;
       const int n = S.box + S.floor;
+      // (poops done while this scrub was on screen aren't in it: they stay for the next one)
       pet.scoop(S.box);
       for (int i = 0; i < S.floor; i++) pet.cleanFloor();
       if (pet.d.evolving) pet.train(ACC_CLEAN, 0.1f * n);
@@ -149,15 +169,15 @@ void Game::screenScrub() {
     }
   } else {
     S.doneT += dt;
-    if (S.doneT > 0.6f) {
+    if (S.doneT > 0.4f) {
       m_.textCenter(9, "CLEAN!");
       if ((int)(anim_ * 6) & 1) { m_.sprite(3, 4, SPR_SPARK); m_.sprite(34, 18, SPR_SPARK); m_.sprite(30, 2, SPR_SPARK); m_.sprite(6, 20, SPR_SPARK); }
     }
-    if (S.doneT > 2.0f || (S.doneT > 0.8f && in.tap)) { setScreen(S_MAIN); return; }
+    if (S.doneT > 1.5f || (S.doneT > 0.6f && in.tap)) { setScreen(S_MAIN); return; }
   }
-  // the suds: each lasts about a second, then thins out and is gone (so they follow the finger instead of piling
+  // the suds: each lasts under half a second, thinning out at the end (so they trail the finger instead of piling
   // up); any still there when it's clean pop away
-  constexpr float SUDS_SECS = 0.9f, SUDS_FADE = 0.35f;   // full for this long, then faded for this long
+  constexpr float SUDS_SECS = 0.3f, SUDS_FADE = 0.15f;   // full for this long, then faded for this long
   const int ns = S.ns < 48 ? S.ns : 48;
   for (int i = 0; i < ns; i++) {
     const auto& u = S.suds[i];
@@ -283,6 +303,23 @@ void Game::drawYeetFella(float cx, float cy, int rot, float sx, float sy, bool f
   rot &= 3;
   const int RW = rot & 1 ? H2 : W2, RH = rot & 1 ? W2 : H2;
   const int x0 = (int)lroundf(cx - RW / 2.0f), y0 = (int)lroundf(cy - RH / 2.0f);
+  // Which sprite row each drawn row shows. End to end: the first and last drawn rows are always the sprite's first
+  // and last. (Plain v * h / H2 skipped the sprite's last rows whenever it was drawn shorter than it is: a Lil Blob
+  // stretched out in flight, or anyone squashed on a bounce, lost the bottom of its outline.) And when rows have to
+  // go, the eyes aren't among them: a drawn row next to where they'd be shows them instead.
+  int8_t rowOf[64];
+  const int HR = H2 < 64 ? H2 : 64;
+  for (int v = 0; v < HR; v++) rowOf[v] = (int8_t)(H2 > 1 ? (v * (h - 1) * 2 + (H2 - 1)) / ((H2 - 1) * 2) : h - 1);
+  if (HR >= 3 && HR < h) {
+    for (int er = 1; er < h - 1; er++) {
+      bool eyes = false, shown = false;
+      for (int c = 0; c < w; c++) if (sp.px[er * w + c] == 2) eyes = true;
+      if (!eyes) continue;
+      int best = 1;
+      for (int v = 0; v < HR; v++) { if (rowOf[v] == er) shown = true; if (v >= 1 && v <= HR - 2 && abs(rowOf[v] - er) < abs(rowOf[best] - er)) best = v; }
+      if (!shown) rowOf[best] = (int8_t)er;
+    }
+  }
   for (int ry = 0; ry < RH; ry++)
     for (int rx = 0; rx < RW; rx++) {
       int u, v;
@@ -292,7 +329,8 @@ void Game::drawYeetFella(float cx, float cy, int rot, float sx, float sy, bool f
         case 3: u = W2 - 1 - ry; v = rx; break;
         default: u = rx; v = ry; break;
       }
-      int c = u * w / W2, r = v * h / H2;
+      int c = W2 > 1 ? (u * (w - 1) * 2 + (W2 - 1)) / ((W2 - 1) * 2) : (w - 1) / 2;   // (columns end to end too)
+      const int r = rowOf[v < HR ? v : HR - 1];
       if (flip) c = w - 1 - c;
       const uint8_t p = sp.px[r * w + c];
       if (!p) continue;
@@ -456,7 +494,7 @@ void Game::yeetStep(float dtReal) {
     // the score
     const int m = Y.meters;
     Y.hearts = m >= 150 ? 4 : m >= 100 ? 3 : m >= 60 ? 2 : m >= 30 ? 1 : 0;
-    pet.exercise(4.0f + 5.0f * Y.hearts, 6.0f, 0.3f + 0.2f * Y.hearts);
+    pet.exercise(4.0f + 5.0f * Y.hearts, 0.3f + 0.2f * Y.hearts);
     if (pet.d.evolving) pet.train(ACC_STRENGTH, 0.1f * Y.hearts);
     sv.lifeGames++;
     if (m > sv.yeetBest) { Y.best = sv.yeetBest > 0 || m > 0; sv.yeetBest = (uint16_t)(m > 65535 ? 65535 : m); }

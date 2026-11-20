@@ -1,5 +1,97 @@
 # Lil Fella: changes
 
+## v1.0.1 shorter goodbye, half volume, battery savings (2026-11-20)
+- **A shorter goodbye:** when a fella dies you still squeeze the dropper three times to suck the puddle up, but the shaking and the extra tap are gone. The dropper rises and the name page opens by itself; "Let's goo!" goes to the opening scene, where one tap squeezes out the new blob.
+- **Every sound setting is half as loud.** It was too loud all the way up. Sound is still 0-5 and 5 is still MAX; each of 1-5 is now 50% of its old level, so the speaker draws about a quarter of the power at every setting.
+- **Battery:** the audio task now sleeps until a sound is queued instead of waking 40 times a second to check, and the amp is switched off before it sleeps. With the screen off, the touch controller is asked every 25 ms instead of every 8 ms.
+- **The motion sensor is switched off.** Nothing in the game uses motion any more: no shaking, and a napping fella is no longer woken by a jolt. The chip is put to sleep at start-up and never read (it was read 10-30 times a second).
+- **Auto off no longer needs the device laid flat:** left untouched on the home screen, a menu or the Meter, the screen turns off after the Auto off time. The default is now 30 Sec; a save still on the old 5 Sec default moves to 30 Sec once, and after that your own pick is kept. An animation is never cut off part-way. The browser page keeps its screen lit as before.
+- The PWR key is checked once a second (it was 12 times a second); a press is never missed, the screen just answers up to a second late.
+- **Settings from more places:** the long press on the LCD now also opens Settings in the middle of any animation (the fall from the dropper, the medicine, eating, growing) and during an ending. Whatever was playing is frozen and carries on from the same spot after Back.
+- **Speed** (the developer option) is now x1, x1000, x3000.
+- The name page waits for a finger still on the screen to lift before it opens, so a press that began on the ending can't type a letter.
+- **Wiki:** the player's guide is one set of pages in `docs/wiki/` (getting started, caring, lessons, growing up, mini-games, gifts, LOCK, endings, settings, hardware, FAQ, with the status effects and POP pages), brought up to date with v0.10 and this version.
+- The ready-built images in `firmware/` are v1.0.1. The web page (`web/lil-fella.html`) is still the v0.10 build: it has not been rebuilt.
+
+## v0.10 POP is a bubble shooter, no more energy, a wiki (2026-11-19)
+- **POP is a new game**, after the arcade's Puzzle Bobble. Bubbles hang from the ceiling in staggered rows (8 across,
+  7 on the rows between). Slide a finger left and right to aim (a dotted line shows the way, wall bounces included),
+  let go to fire. Three or more of a kind touching pop, and whatever was hanging from them drops off. Every 8 shots
+  the ceiling comes down a row; a bubble pushed below the line ends the game. No colours on this LCD, so the five
+  kinds are an X, a triangle, a square, an empty ring and a black one. Hearts: 4 for clearing the field before the
+  ceiling moves, 3 after one drop, 2 after more, 1 for losing with a good many popped. The old POP (poop bubbles) is
+  gone. The game is in `src/game/pop.cpp`; `./sim pop` tests it.
+- **POP has the whole screen.** The icons above and below are put away while it's played and its LCD is half as tall
+  again (43 rows of dots, not 28): seven rows of bubbles fit above the line where four did, and a game starts with
+  three full rows, not two. The only button is a small BACK, top right. A finger anywhere else aims, so one resting
+  low on the screen can't press an icon by mistake. (The dot matrix can now be given a taller size by a game:
+  `Matrix::h`, `Matrix::y0`.)
+- **POP's square is a diamond.** The square was a block in a round grey skin, and read as a third, faded circle
+  beside the empty ring and the black one. It's a grey diamond with a black edge now.
+- **Stats (the Meter) and Medicine have swapped places:** the Meter is bottom left, Medicine next to it.
+- **No more energy.** They used to have a hidden energy level: each game cost 8 (6 for YEET and POP), under 12 they
+  fell asleep and under 10 they refused to play (TIRED). A young fella needs dozens of games a day to stay happy, so
+  a Lil Blub that was played with properly napped 7 times (2.5 hours) between 10:30 and 20:00. Energy is removed
+  from the code altogether: **every game is free, as often as you like**; nothing wears them out; there are no
+  naps from tiredness and no TIRED. Turning the light off in the day no longer sends them to sleep. The one daytime
+  nap left is the Lil Blob's test nap (the light lesson), which is now simply timed: 10 minutes, about 7 with the
+  light off. Night sleep is unchanged. (The save keeps an unused field where energy was, so saves carry over.)
+- **Lil Blub at 1 hour** (it was 15 minutes), still with all 7 lessons learned first. It's an hour of their own age,
+  which runs a little fast while they're hungry or unhappy. A blob made at night still falls asleep at 30 minutes,
+  so that one now always grows up in the morning.
+- **The motion sensor is switched off** to save battery: the chip is powered down at boot and never read. Auto
+  off now goes by time untouched alone (it also used to need the device lying flat and still), and waits for an
+  animation to finish. In the ending, where the dropper asked for three shakes it now says SQUEEZE! and takes three
+  taps. Moving the device no longer wakes a napping Lil Blob, so the grumpy YAWN is gone. `-DLF_MOTION=1` brings it all back.
+- **Auto off is 15 Sec by default** (it was 5 Sec). A device still on the old 5 Sec default is moved to 15 Sec
+  once; 5 Sec can be picked again in Settings.
+- **WiFi and Bluetooth are off at all times.** Neither was ever started by this firmware, so neither was scanning;
+  boot now makes sure of it (stops and frees both drivers if anything had brought one up) and says so in the boot
+  log: `[hal] radios: wifi off (never started), bluetooth off (never started)`.
+- **Scrub:** leave the scrub and come back, and it is as you left it: the same poops, in the same places, worn
+  down as far. A poop done in between joins the others. It is kept until the scrub is finished, a new blob arrives
+  or the device restarts.
+- **The litter box holds every poop** they've done since it was last cleaned, up to 12 (it stopped counting at 6).
+  On the home screen six still make a tidy pile; past that it's a tower that sways, with a fly round it at 8, a flag
+  planted on top at 10 and a second fly at 11. In the scrub they're all there, heaped three deep, and each one is
+  more to scrub: about 2 s of brisk rubbing for one easy poop and a second more for every other (it used to be 3-5 s
+  whatever the number). Stuck-on ones take up to twice the rubbing, not 5 times. A full box and a full floor is 17 s
+  if they're all easy, 20 s or so as they come. Health and trust are as before (four or more in the box drains them).
+- **Suds** in the scrub are gone in under half a second (it was 1.25 s), and CLEAN! is on screen for 1.5 s (2 s).
+- **Bun is a bao bun**, not a hot-dog bun, and eats like one: the pinched top comes undone, it flips over onto the
+  food, which goes in through the top as the filling, flips back, pinches itself shut and steams, a puff with every
+  chew. (The Eating Lab in `art/eating/` still has the old routine.)
+- **Big Blorbus Blobbert's meal:** the food fell towards his forehead and then jumped to the top of his head. It
+  falls onto the top of his head.
+- **Medicine:** the syringe stopped short of them. It now goes to where their side really is, at the needle's
+  height, touches it, and goes in by a dot. Big Blorbus Blobbert squeezes up against the wall to leave room for it
+  (the syringe used to be off the screen).
+- **Lil Blob's meal** is one unbroken shot. The zoom-in and zoom-out, and the cuts either side of them, are gone
+  (the food also used to vanish for a moment as it was swallowed). Now a side of the body flows over the food and
+  closes round it, the body follows and swells into a belly with the meal in it, under the eyes; it dissolves
+  there, the belly gurgles, and they shrink back.
+- **Sound** (Settings): each tap is one step quieter (2, 1, 0 OFF, then round to 5 MAX). It used to go up. A new
+  save still starts at 2.
+- **Meter and Medicine:** a tap meant for the Meter sometimes gave Medicine, its neighbour. Icons were chosen by the
+  very first spot the finger touched; they're now chosen by where it rested over the whole press, and the icon that
+  lights under your finger is the one that will fire. This is a fix for the likely cause (a fingertip lands on its
+  edge and rolls flat); it hasn't been confirmed on a device.
+- **Meter, first page:** the battery is a percentage only; the bar is gone.
+- **YEET:** the bottom of their outline was missing in flight. A fella drawn shorter than its sprite (a Lil Blob
+  stretched out in the air, anyone squashed on a bounce) lost its last rows. All of the outline is drawn now, and
+  the eyes are kept when rows have to go.
+- **RUN:** a card before the run says tap = jump, tap in the air = double jump (a tap puts it away; it goes by
+  itself after 4 s). Power-ups are no longer in the same place: how many things pass before one comes (2 to 9), its
+  height (on the ground, a jump up, or high up) and how far out it sits are drawn fresh each time, and the first can
+  come from about 6 seconds in.
+- **Look picker:** the row of dots under the looks is gone.
+- **Wiki:** `docs/wiki/`: every status effect with a picture of each (made by the simulator from the real game), and
+  how to play POP.
+- The simulator: `./sim pop`, `v010`, `blub`, `wikishots`, `popshots`; `litter` is gone with the old POP.
+- The ready-built images in `firmware/` and the web page (`web/lil-fella.html`) are v0.10. They were built on
+  Windows this time (PlatformIO for the firmware; zig's clang in place of g++ and wasi-sdk for the simulator and the
+  web page). None of v0.10 has been run on a board yet.
+
 ## v0.09 merge, volume 0-5, hold-to-repeat clock (2026-11-18)
 - **Merged** the browser-built v0.08 (LOCK, no training, wet synthesised sounds, litter box, Tree page) with the v0.07 follow-up work.
 - **Sound volume is 0-5** (0 off, 5 max). The default is 2, a quarter of the old MID: the first-run clock page was far too loud.

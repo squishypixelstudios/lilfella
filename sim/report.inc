@@ -33,8 +33,8 @@ struct Reporter {
     const double w = ms / 1000.0;
     const int total = d.droppings + d.floorMess;
     if (b) {
-      b->w += w; b->hunger += d.hunger * w; b->fun += d.fun * w; b->energy += d.energy * w; b->health += d.health * w; b->chonk += d.chonk * w;
-      if (g.pet.sleeping) { b->asleep += w; if (g.pet.napping) b->nap += w; } else b->awake += w;
+      b->w += w; b->hunger += d.hunger * w; b->fun += d.fun * w; b->energy += 0.0f * w; b->health += d.health * w; b->chonk += d.chonk * w;
+      if (g.pet.sleeping) { b->asleep += w; if ((g.pet.nap > 0)) b->nap += w; } else b->awake += w;
       if (g.lightOff()) b->lightOff += w;
       if (d.health < 35) b->sick += w;
       if (g.callReason() != CR_NONE) b->calling += w;
@@ -104,15 +104,19 @@ struct Reporter {
   }
   void playLitter() {
     if (G->scr == S_SCRUB) { playScrub(); return; }
-    if (G->scr != S_LITTER) return;
-    wait(0.6f);
-    for (int guard = 0; guard < 30 * 60 && G->scr == S_LITTER && !G->lg_.done; guard++) {
-      bool tapped = false;
-      for (int i = 0; i < LITTER_BUBBLES && !tapped; i++) { int px, py; bool pp; if (!G->lgBubble(i, px, py, pp) || !pp) continue; for (int j = 0; j < LITTER_BUBBLES && !tapped; j++) { int cx, cy; bool cp; if (G->lgBubble(j, cx, cy, cp) && !cp && abs(cx - px) < 9 && cy < py && py - cy < 12 && cy >= 2) { tapD(cx, cy); tapped = true; } } }
-      if (!tapped) fr();
+  }
+  void playPop() {   // the bubble shooter, with a fairly steady hand
+    if (G->scr != S_POP) return;
+    uint32_t rs = 4242;
+    for (int f = 0; f < 30 * 6 && G->scr == S_POP && G->pop_.card > 0; f++) fr();
+    for (int shots = 0; G->scr == S_POP && G->pop_.phase == 1 && shots < 400; shots++) {
+      const int x = popAimX(popBotAngle(*G, 0.05f, rs));
+      for (int k = 0; k < 2; k++) { P->ms += 33; G->frame(fb, true, x * 2, (MY + 60) * 2); sample(33); }
+      fr();
+      for (int f = 0; f < 30 * 6 && G->scr == S_POP && G->pop_.phase == 2; f++) fr();
     }
-    for (int f = 0; f < 30 * 3 && G->scr == S_LITTER; f++) fr();
-    if (G->scr == S_LITTER) tapI(IC_LITTER);
+    for (int f = 0; f < 30 * 3 && G->scr == S_POP && G->pop_.phase == 3; f++) fr();
+    if (G->scr == S_POP) tapD(20, 14);
   }
 
   // ---- one care action; returns false when there was nothing to do ----
@@ -137,7 +141,6 @@ struct Reporter {
     }
     if (why == CR_MESS || d.droppings || d.floorMess) { tapI(IC_LITTER); count(&Bin::litter); playLitter(); settle(); return true; }
     if ((why == CR_BORED || d.fun < 50) && !g.pet.sleeping) {
-      if (d.energy < 10) return false;
       tapI(IC_PLAY); wait(0.3f);
       if (g.scr != S_MENU) { count(&Bin::tired); settle(); return false; }
       sessionGame++;
@@ -153,7 +156,7 @@ struct Reporter {
   bool trace = false;
   void checkIn(float watch) {
     count(&Bin::checks);
-    if (trace) printf("min %3d check: why %d health %.0f hunger %.0f fun %.0f energy %.0f sleep %d nap %d light %d scr %d tut %d\n", minute(), (int)G->callReason(), G->pet.d.health, G->pet.d.hunger, G->pet.d.fun, G->pet.d.energy, G->pet.sleeping, G->pet.napping, G->lightOff(), (int)G->scr, G->tutWant_);
+    if (trace) printf("min %3d check: why %d health %.0f hunger %.0f fun %.0f energy %.0f sleep %d nap %d light %d scr %d tut %d\n", minute(), (int)G->callReason(), G->pet.d.health, G->pet.d.hunger, G->pet.d.fun, 0.0f, G->pet.sleeping, (G->pet.nap > 0), G->lightOff(), (int)G->scr, G->tutWant_);
     if (!G->displayOn()) tapD(20, 1);   // the first touch only wakes the screen
     wait(0.5f);
     // a quick pet, the way people say hello
@@ -171,7 +174,7 @@ struct Reporter {
 
   int formWidth() const { return spriteW(G->gameSprite()); }
   float dodgeScore() const { return G->dg_.score; }
-  int litterGot() const { return G->lg_.got; }
+  int litterGot() const { return 0; }
   int litterBubble() const { return 0; }
 
   // ---- one 2-hour session ----
@@ -255,10 +258,10 @@ static int cmdGames(const char* dir, int n) {
         tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); p.setClock(12, 0); R->t0 = p.ms;
         g.simulate(70, false); R->wait(2);
         g.pet.d.age = BABY_END + 3600; g.pet.d.pad0[0] = 1; g.pet.d.pad2 = 0x2000; g.pet.d.nextSick = 1e9f; g.pet.rng = 99991u * (i + 1) + sk;
-        g.pet.d.hunger = 70; g.pet.d.fun = 30; g.pet.d.energy = 80; g.pet.d.health = 90; g.pet.sleeping = false;
+        g.pet.d.hunger = 70; g.pet.d.fun = 30; g.pet.d.health = 90; g.pet.sleeping = false;
         R->wait(3.0f); if (g.scr == S_EVOLVE) { R->tapD(MW / 2, 20); R->wait(3); }
-        g.pet.d.fun = 30; g.pet.d.energy = 80;
-        const float fun0 = g.pet.d.fun, en0 = g.pet.d.energy, ch0 = g.pet.d.chonk; const uint32_t c0 = g.sv.sickCount;
+        g.pet.d.fun = 30; 
+        const float fun0 = g.pet.d.fun, en0 = 0.0f, ch0 = g.pet.d.chonk; const uint32_t c0 = g.sv.sickCount;
         const uint32_t ms0 = p.ms;
         int result = 0, clumps = 0, flo = 0, hb = 0;
         if (kind == 1) {
@@ -271,7 +274,7 @@ static int cmdGames(const char* dir, int n) {
         }
         R->settle();
         const char* nm = kind == 1 ? "dodge" : "scrub";
-        fprintf(f, "%s,%d,%d,%d,%.1f,%.1f,%.1f,%.2f,%d,%d,%d,%d\n", nm, sk, i, result, (p.ms - ms0) / 1000.0, g.pet.d.fun - fun0, en0 - g.pet.d.energy,
+        fprintf(f, "%s,%d,%d,%d,%.1f,%.1f,%.1f,%.2f,%d,%d,%d,%d\n", nm, sk, i, result, (p.ms - ms0) / 1000.0, g.pet.d.fun - fun0, en0 - 0.0f,
                 g.pet.d.chonk - ch0, (int)(g.sv.sickCount - c0), clumps, flo, hb);
         delete R;
       }
@@ -290,7 +293,7 @@ static int cmdGames(const char* dir, int n) {
     for (int i = 0; i < 30; i++) {
       auto* R = new Reporter(); SimPlat p; p.ms = 5000 + i * 7717 + sk; R->P = &p; Game g(&p); R->G = &g; g.begin(); R->r = 777u + i * 31337u;
       tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); p.setClock(12, 0); R->t0 = p.ms; g.simulate(70, false); R->wait(1);
-      g.pet.d.age = L.age; g.pet.d.pad0[0] = L.pad; g.pet.d.pad2 = 0x2000; g.pet.d.nextSick = 1e9f; g.pet.d.energy = 90; g.pet.d.hunger = 80; g.pet.d.fun = 40; g.pet.sleeping = false; g.pet.rng = 4242u + i * 99991u;
+      g.pet.d.age = L.age; g.pet.d.pad0[0] = L.pad; g.pet.d.pad2 = 0x2000; g.pet.d.nextSick = 1e9f; g.pet.d.hunger = 80; g.pet.d.fun = 40; g.pet.sleeping = false; g.pet.rng = 4242u + i * 99991u;
       R->wait(1.0f); if (g.scr != S_MAIN) { g.debugAct(-1); R->wait(0.2f); }
       w = R->formWidth();
       R->tapI(IC_PLAY); R->wait(0.3f); R->tapD(30, 4); R->wait(0.2f); R->playDodge(sk); sc.push_back(R->dodgeScore());
@@ -323,10 +326,10 @@ struct TouchMap {
   void fresh() {
     delete g; p = SimPlat(); p.ms = 5000; g = new Game(&p); R.P = &p; R.G = g; g->begin();
     tap(*g, p, 92, 195); tap(*g, p, 92, 100); tap(*g, p, 92, 182); tapDot(*g, p, 20, 14); p.setClock(12, 0); R.t0 = p.ms; R.wait(SQUEEZE_SECS + 0.5f);
-    g->pet.d.pad2 = 0xE0FF; g->pet.d.nextSick = 1e9f; g->pet.d.hunger = g->pet.d.fun = 80; g->pet.d.energy = 90;
+    g->pet.d.pad2 = 0xE0FF; g->pet.d.nextSick = 1e9f; g->pet.d.hunger = g->pet.d.fun = 80; 
   }
   int iconAt(int x, int y) {   // what the game's own hit test says (logical px)
-    g->in.tap = true; g->in.px = x; g->in.py = y; int ic = -1;
+    g->in.tap = true; g->in.px = g->in.ax = x; g->in.py = g->in.ay = y; int ic = -1;
     if (!g->iconTapped(ic)) ic = -1;
     g->in.tap = false; return ic;
   }
@@ -451,13 +454,13 @@ struct TouchMap {
       int hits[5] = {0}, bands = 0, last = -1;
       for (int cell = 0; cell < MH * (mn == 1 ? 2 : 1); cell++) {
         const int dy = cell % MH, dxm = mn == 1 ? (cell < MH ? 10 : 30) : 20;
-        g->setScreen(S_MAIN); g->pet.d.energy = 100; R.fr(); R.tapI(mn == 0 ? IC_FEED : IC_PLAY); R.fr();
+        g->setScreen(S_MAIN); R.fr(); R.tapI(mn == 0 ? IC_FEED : IC_PLAY); R.fr();
         if (g->scr != S_MENU) { g->pet.sleeping = false; continue; }
         g->pet.d.hunger = 50;
         R.tapD(dxm, dy);
         int what = -1;
         if (mn == 0 && g->scr == S_ANIM) what = g->an_ == AN_EAT_MEAL ? 0 : g->an_ == AN_EAT_SNACK ? 1 : g->an_ == AN_EAT_DIET ? 2 : -1;
-        if (mn == 1) what = g->scr == S_DODGE ? 0 : g->scr == S_RUN ? 1 : g->scr == S_YEET ? 2 : g->scr == S_LITTER ? 3 : -1;
+        if (mn == 1) what = g->scr == S_DODGE ? 0 : g->scr == S_RUN ? 1 : g->scr == S_YEET ? 2 : g->scr == S_POP ? 3 : -1;
         if (what >= 0) hits[what]++;
         if (what != last) bands++;
         last = what;
@@ -486,7 +489,7 @@ struct TouchMap {
       float settledX = 0;
       // the same scene, set up afresh before each tap
       auto scene = [&]() {
-        d.age = L.age; d.pad0[0] = L.pad; d.exploring = 0; g->pet.sleeping = false; g->pet.napping = false; d.pad1[1] = 0; d.energy = 90;
+        d.age = L.age; d.pad0[0] = L.pad; d.exploring = 0; g->pet.sleeping = false; d.pad1[1] = 0; 
         d.bubblesOnFloor = hb; d.giftOnFloor = gift; d.floorMess = mess; d.droppings = drop; d.giftAge = d.messAge = 0;
         g->lastForm_ = g->form(); g->pottyPending_ = 0; d.digestTimer = 9999; g->msgT_ = 0; g->clockShowT_ = 0; g->petCd_ = 0;
         g->setScreen(S_MAIN); g->blobX_ = g->blobTx_ = startX;

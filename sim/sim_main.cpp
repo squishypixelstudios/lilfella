@@ -18,19 +18,21 @@ using namespace lf;
 struct SimPlat : Platform {
   uint32_t ms = 1000;
   int64_t epochOffset;
-  float ax = 0, ay = 1, az = 0;   // held upright by default (flat = az 1)
+  bool autoOff = false;   // the Auto off timer: off for the scripted tests (they leave the screen untouched for long stretches)
+  bool idleAutoOff() override { return autoOff; }
   std::vector<uint8_t> store;
   int soundCount[SND_COUNT] = {0};
   SimPlat() { epochOffset = (int64_t)toEpoch({2026, 11, 2, 18, 9, 0}) - ms / 1000; }
   uint32_t millis() override { return ms; }
   bool rtcGet(DateTime& dt) override { dt = fromEpoch((uint32_t)(epochOffset + ms / 1000)); return true; }
   void rtcSet(const DateTime& dt) override { epochOffset = (int64_t)toEpoch(dt) - ms / 1000; }
-  bool imuRead(float& x, float& y, float& z) override { x = ax; y = ay; z = az; return true; }
   bool button = false;   // PWR / BOOT pressed (one event)
   bool powerButton() override { const bool b = button; button = false; return b; }
   bool loadSave(void* buf, uint32_t len) override { if (store.size() != len) return false; memcpy(buf, store.data(), len); return true; }
   bool storeSave(const void* buf, uint32_t len) override { store.assign((const uint8_t*)buf, (const uint8_t*)buf + len); return true; }
   void playSound(Sound s, uint8_t) override { soundCount[s]++; }
+  int batt = -1;   // battery percent (-1: none fitted)
+  int batteryPercent() override { return batt; }
   uint32_t seed = 0xC0FFEE;
   uint32_t randomSeed() override { return seed; }
   void setClock(int h, int m) { DateTime d = fromEpoch((uint32_t)(epochOffset + ms / 1000)); d.hour = h; d.minute = m; d.second = 0; rtcSet(d); }
@@ -44,18 +46,46 @@ static void step(Game& g, SimPlat& p, bool down = false, int x = 0, int y = 0) {
 static void run(Game& g, SimPlat& p, float sec) { int n = (int)(sec * 30); for (int i = 0; i < n; i++) step(g, p); }
 static void tap(Game& g, SimPlat& p, int x, int y) { step(g, p, true, x, y); step(g, p, true, x, y); step(g, p); step(g, p); }
 static void tapDot(Game& g, SimPlat& p, int dx, int dy) { tap(g, p, MX + dx * DOT + 1, MY + dy * DOT + 1); }
-// Bubble Pop Rush: pop the clear bubbles that block the poop bubbles (wrongFirst: splat a poop bubble first = a miss)
-static bool litterFind(Game& g, bool wantPoop, int& x, int& y) {
-  for (int i = 0; i < LITTER_BUBBLES; i++) { int bx, by; bool pp; if (g.lgBubble(i, bx, by, pp) && pp == wantPoop && by >= 2 && by <= 24 && bx >= 2 && bx <= 37) { x = bx; y = by; return true; } }
-  return false;
-}
-static bool litterBlocker(Game& g, int& x, int& y) {   // a clear bubble sitting above a poop bubble
-  for (int i = 0; i < LITTER_BUBBLES; i++) {
-    int px, py; bool pp;
-    if (!g.lgBubble(i, px, py, pp) || !pp) continue;
-    for (int j = 0; j < LITTER_BUBBLES; j++) { int cx, cy; bool cp; if (g.lgBubble(j, cx, cy, cp) && !cp && abs(cx - px) < 9 && cy < py && py - cy < 12 && cy >= 2) { x = cx; y = cy; return true; } }
+// POP (the bubble shooter): a bot. popBotAngle looks along every aim, sees where each shot would land (the game's own
+// popTrace) and takes the one that pops the most; failing that, the one that lands beside the most of its own kind,
+// as high up as it can. `wobble` (radians) adds a human's unsteady hand; rs is its random state.
+static float popBotAngle(const Game& g, float wobble, uint32_t& rs) {
+  const Game::Pop& P = g.pop_;
+  float bestA = 0; int bestS = -100000;
+  for (int i = -50; i <= 50; i++) {
+    const float a = i * (POP_MAX_ANG / 50.0f);
+    int r, c;
+    if (!g.popTrace(a, r, c)) continue;
+    bool mark[POP_ROWS][POP_COLS] = {};
+    int stR[64], stC[64], sp = 0, n = 0;
+    stR[sp] = r; stC[sp++] = c; mark[r][c] = true;
+    while (sp) {
+      const int rr = stR[--sp], cc = stC[sp]; n++;
+      int nr[6], nc[6]; const int k = Game::popNeighbours(rr, cc, nr, nc);
+      for (int j = 0; j < k; j++) if (!mark[nr[j]][nc[j]] && P.g[nr[j]][nc[j]] == P.cur) { mark[nr[j]][nc[j]] = true; stR[sp] = nr[j]; stC[sp++] = nc[j]; }
+    }
+    int score = n >= 3 ? 1000 + n * 50 : n * 40 - (r + P.drops) * 15;
+    if (r + P.drops >= POP_SAFE_ROWS) score -= 5000;   // over the line: only if there's nothing else
+    score -= abs(i) / 5;                               // (ties: the straighter shot)
+    if (score > bestS) { bestS = score; bestA = a; }
   }
-  return false;
+  if (wobble > 0) { rs = rs * 1664525u + 1013904223u; const float u = ((rs >> 8) & 0xFFFF) / 65535.0f - 0.5f; bestA += u * 2 * wobble; }
+  return bestA < -POP_MAX_ANG ? -POP_MAX_ANG : bestA > POP_MAX_ANG ? POP_MAX_ANG : bestA;
+}
+static int popAimX(float ang) { return W / 2 + (int)lroundf(ang / POP_MAX_ANG * 74.0f); }   // the finger's x for an aim (the reverse of Game::popAngleAt)
+// fire one shot with a finger: down on the LCD at that aim, held a moment, lifted; then wait for it to land
+static void popShoot(Game& g, SimPlat& p, float ang) {
+  const int x = popAimX(ang);
+  step(g, p, true, x, MY + 60); step(g, p, true, x, MY + 60); step(g, p);
+  for (int i = 0; i < 30 * 6 && g.scr == S_POP && g.pop_.phase == 2; i++) step(g, p);
+}
+// play a whole game (from the card to the moment it's over). Returns the shots fired.
+static int popPlay(Game& g, SimPlat& p, float wobble = 0, uint32_t seed = 1) {
+  uint32_t rs = seed * 2654435761u + 7;
+  for (int i = 0; i < 30 * 6 && g.scr == S_POP && g.pop_.card > 0; i++) step(g, p);
+  int shots = 0;
+  for (; g.scr == S_POP && g.pop_.phase == 1 && shots < 400; shots++) popShoot(g, p, popBotAngle(g, wobble, rs));
+  return shots;
 }
 // Clean: rub a finger back and forth over the LCD until it's clean (returns the seconds it took)
 static float scrubSolve(Game& g, SimPlat& p) {
@@ -64,24 +94,11 @@ static float scrubSolve(Game& g, SimPlat& p) {
   step(g, p);
   return i / 30.0f;
 }
-static void litterSolve(Game& g, SimPlat& p, bool wrongFirst) {
-  for (int guard = 0; g.scr == S_LITTER && g.lgGot() < g.lgN() && guard < 30 * 120; guard++) {
-    int x, y;
-    if (wrongFirst && litterFind(g, true, x, y)) { tapDot(g, p, x, y); wrongFirst = false; continue; }
-    if (litterBlocker(g, x, y)) tapDot(g, p, x, y); else step(g, p);
-  }
-}
-// the new ending: three squeezes, a shake or three, then a tap
-static void shakeDevice(Game& g, SimPlat& p, int bursts) {
-  for (int b = 0; b < bursts; b++) { for (int i = 0; i < 10; i++) { p.ax = (i & 1) ? 2.2f : -2.2f; step(g, p); } p.ax = 0; run(g, p, 0.6f); if (getenv("DBGSHAKE")) printf("   shakes %d scr %d\n", g.endShakes(), (int)g.scr); }
-}
+// the ending: three squeezes, the dropper rises, then the name page opens by itself
 static void endingFlow(Game& g, SimPlat& p) {
   run(g, p, ENDING_WAIT_AT);
   for (int i = 0; i < ENDING_PULLS; i++) { for (int k = 0; k < 4; k++) step(g, p, true, MX + 80, MY + 50); step(g, p); run(g, p, 0.8f); }
   run(g, p, 3.2f);
-  shakeDevice(g, p, 5);
-  run(g, p, 0.3f);
-  tapDot(g, p, 20, 14); run(g, p, 1.0f);
 }
 static void tapIcon(Game& g, SimPlat& p, int ic) { tap(g, p, iconX(ic) + 8, iconY(ic) + 8); }
 static void shot(Game& g, const char* name) {
@@ -186,7 +203,7 @@ static int cmdShots() {
   if (getenv("DBGE")) printf("pre scr %d an %d locked %d ended %d\n", (int)g.scr, (int)g.anim(), g.locked(), g.pet.ended);
   g.pet.d.resent = 100; g.pet.d.hunger = 0; g.pet.d.fun = 0; g.simulate(5, false); run(g, p, 2); shot(g, "ending_no_trust");
   if (getenv("DBGE")) printf("post scr %d an %d resent %.0f ended %d\n", (int)g.scr, (int)g.anim(), g.pet.d.resent, g.pet.ended);
-  endingFlow(g, p);   // squeeze three times, shake, tap
+  endingFlow(g, p);   // squeeze three times: the name page
   if (getenv("DBGE")) printf("after flow scr %d\n", (int)g.scr);
   // a new blob, then the dissolve: too much chonk
   tap(g, p, 92, 120); run(g, p, 0.3f); tap(g, p, 92, 182); run(g, p, 0.5f);
@@ -206,16 +223,12 @@ static int cmdShots() {
   if (g.scr != S_ENDING) printf("FAIL one squeeze left the ending\n");
   for (int i = 0; i < 4; i++) step(g, p, true, MX + 80, MY + 50); step(g, p); run(g, p, 0.7f); shot(g, "dissolve_8_two_thirds");
   for (int i = 0; i < 4; i++) step(g, p, true, MX + 80, MY + 50); step(g, p); run(g, p, 1.2f); shot(g, "dissolve_9_last");
-  run(g, p, 3.5f); shot(g, "dissolve_10_shake_prompt");
-  tapDot(g, p, 20, 14); run(g, p, 0.3f);
-  if (g.scr != S_ENDING) printf("FAIL a tap skipped the shaking\n");
-  shakeDevice(g, p, 1); shot(g, "dissolve_11_shaking");
-  shakeDevice(g, p, 5); run(g, p, 0.3f); shot(g, "dissolve_12_ready");
-  tapDot(g, p, 20, 14); run(g, p, 0.3f); shot(g, "dissolve_13_drop"); run(g, p, 0.6f);
+  run(g, p, 1.2f); shot(g, "dissolve_10_rising");                            // the dropper lifts away, full of goo
+  run(g, p, 1.0f); shot(g, "dissolve_11_name_page");
   if (g.scr != S_SETUP_NAME) printf("FAIL after the dissolve: screen %d\n", (int)g.scr);
   // games, directly
   tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); g.simulate(13 * 3600, false); g.scr = S_MAIN;
-  g.pet.d.energy = 90; g.pet.d.hunger = 90; g.pet.d.fun = 50; g.pet.sleeping = false;
+  g.pet.d.hunger = 90; g.pet.d.fun = 50; g.pet.sleeping = false;
   g.debugAct(5); run(g, p, 0.3f);
   // a finger sliding back and forth across the LCD
   for (int i = 0; i < 30 * 8 && g.scr == S_DODGE; i++) { int x = MX + 20 + (int)(120 * (0.5f + 0.5f * sinf(i * 0.05f))); step(g, p, true, x, MY + 80); if (i == 150) shot(g, "dodge_run"); }
@@ -231,9 +244,7 @@ static int cmdShots() {
   g.pet.d.droppings = 2; g.pet.d.floorMess = 0; run(g, p, 0.5f); shot(g, "box0_two");
   g.pet.d.droppings = 5; g.pet.d.floorMess = 2; run(g, p, 0.5f); shot(g, "box0_full_floor");
   tapIcon(g, p, IC_LITTER); run(g, p, 1.6f); shot(g, "litter_game_start");
-  { int x, y; for (int i = 0; i < 150 && !litterBlocker(g, x, y); i++) step(g, p); if (litterBlocker(g, x, y)) { shot(g, "litter_bubbles"); tapDot(g, p, x, y); shot(g, "litter_pop"); } }
-  run(g, p, 3.5f); shot(g, "litter_progress");
-  litterSolve(g, p, true);
+  scrubSolve(g, p);
   run(g, p, 0.3f); shot(g, "litter_done");
   run(g, p, 2.0f);
   tap(g, p, 92, 110); run(g, p, 0.3f);
@@ -279,13 +290,13 @@ static int cmdLife() {
     tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f);
     const int every = checks[style];
     // the first few minutes: you're there when they hatch (a feed, a game, the starter bug's medicine)
-    for (int k = 0; k < 6; k++) { g.simulate(60, false); bool o; if (g.pet.d.hunger < 75 && g.pet.canFeed()) g.pet.feed(FOOD_KIBBLE, o); if (g.pet.d.fun < 70) g.pet.exercise(25, 6, 1); while (g.pet.sick()) g.pet.vetVisit(); }
+    for (int k = 0; k < 6; k++) { g.simulate(60, false); bool o; if (g.pet.d.hunger < 75 && g.pet.canFeed()) g.pet.feed(FOOD_KIBBLE, o); if (g.pet.d.fun < 70) g.pet.exercise(25, 1); while (g.pet.sick()) g.pet.vetVisit(); }
     int t = 0, m12 = -1, m18 = -1;
     int reasonMin[16] = {0};
     while (g.sv.hasBlob && t < 40 * 86400) {
       if (style >= DAYONLY) {   // a day person: checks at 8am and every few hours after, the last one by 10pm
         g.simulate(3600, false); t += 3600;
-        if (getenv("DBGHOUR") && style == atoi(getenv("DBGHOUR")) && t < 2 * 86400) printf("    h %02d health %5.1f hunger %3.0f fun %3.0f energy %3.0f sick %d/%d/%d sleep %d mess %d/%d chonk %.0f\n", g.hour, g.pet.d.health, g.pet.d.hunger, g.pet.d.fun, g.pet.d.energy, g.pet.d.sick[0], g.pet.d.sick[1], g.pet.d.sick[2], g.pet.sleeping, g.pet.d.droppings, g.pet.d.floorMess, g.pet.d.chonk);
+        if (getenv("DBGHOUR") && style == atoi(getenv("DBGHOUR")) && t < 2 * 86400) printf("    h %02d health %5.1f hunger %3.0f fun %3.0f energy %3.0f sick %d/%d/%d sleep %d mess %d/%d chonk %.0f\n", g.hour, g.pet.d.health, g.pet.d.hunger, g.pet.d.fun, 0.0f, g.pet.d.sick[0], g.pet.d.sick[1], g.pet.d.sick[2], g.pet.sleeping, g.pet.d.droppings, g.pet.d.floorMess, g.pet.d.chonk);
         if (!g.sv.hasBlob) break;
         if (g.hour < 8 || g.hour > 22 || (g.hour - 8) % (every / 3600)) continue;
       } else {
@@ -299,7 +310,7 @@ static int cmdLife() {
       // answer the attention icon (and top their up a little), like a player who hears the beep on their next check
       if (g.pet.sleeping && g.pet.d.hunger < 40) g.pet.wakeGently();
       for (int k = 0; k < 3 && g.pet.d.hunger < 75 && g.pet.canFeed(); k++) { bool o; g.pet.feed(FOOD_KIBBLE, o); }
-      for (int k = 0; k < 3 && g.pet.d.fun < 70; k++) g.pet.exercise(25, 6, 1);
+      for (int k = 0; k < 3 && g.pet.d.fun < 70; k++) g.pet.exercise(25, 1);
       if (g.pet.d.droppings || g.pet.d.floorMess) { g.pet.scoop(6); while (g.pet.d.floorMess) g.pet.cleanFloor(); }
       while (g.pet.sick()) g.pet.vetVisit();   // one dose per sickness
       if (g.pet.sleeping || g.hour >= 21 || g.hour < 8) g.pet.d.pad1[1] |= 1; else g.pet.d.pad1[1] &= ~1;   // lights off while they sleep (and at bedtime)
@@ -327,11 +338,11 @@ static int cmdFlows() {
   for (int i = 0; i < 45; i++) step(g, p, true, 92, 70);
   step(g, p); expect(S_SETTINGS, "long press");
   const int v0 = g.sv.volume; tap(g, p, 92, SETTINGS_Y0 + 12); if (g.sv.volume == v0) { printf("FAIL sound row\n"); bad++; }
-  { // auto off: 5 Sec -> 15 Sec -> Never -> 5 Sec
+  { // auto off: 30 Sec (the default) -> 1 Min -> Never -> 5 Sec -> 15 Sec -> 30 Sec
     const uint8_t a0 = g.sv.eq[2]; uint8_t seen[3];
     for (int i = 0; i < 3; i++) { tap(g, p, 92, SETTINGS_Y0 + 3 * SETTINGS_STEP + 12); seen[i] = g.sv.eq[2]; }
-    tap(g, p, 92, SETTINGS_Y0 + 3 * SETTINGS_STEP + 12); tap(g, p, 92, SETTINGS_Y0 + 3 * SETTINGS_STEP + 12);   // ... -> Never -> back to 5 Sec
-    if (a0 != 0 || seen[0] != 2 || seen[1] != 3 || seen[2] != 4) { printf("FAIL auto off cycle %d -> %d %d %d\n", a0, seen[0], seen[1], seen[2]); bad++; }
+    tap(g, p, 92, SETTINGS_Y0 + 3 * SETTINGS_STEP + 12); tap(g, p, 92, SETTINGS_Y0 + 3 * SETTINGS_STEP + 12);   // ... -> 15 Sec -> back to 30 Sec
+    if (a0 != 3 || seen[0] != 4 || seen[1] != 1 || seen[2] != 0 || g.sv.eq[2] != 3) { printf("FAIL auto off cycle %d -> %d %d %d\n", a0, seen[0], seen[1], seen[2]); bad++; }
   }
   tap(g, p, 92, SETTINGS_Y0 + 4 * SETTINGS_STEP + 12); expect(S_SETTINGS, "more");
   tap(g, p, 92, SETTINGS_Y0 + 0 * SETTINGS_STEP + 12); expect(S_FRIENDS, "old friends row");
@@ -347,16 +358,15 @@ static int cmdFlows() {
   tap(g, p, 50, 124); expect(S_SETTINGS, "erase everything no");
   if (!g.sv.hasBlob) { printf("FAIL erase NO still erased\n"); bad++; }
   { const bool t0 = g.showTouch; tap(g, p, 92, SETTINGS_Y0 + 2 * SETTINGS_STEP + 12); if (g.showTouch == t0) { printf("FAIL touch row (page 3)\n"); bad++; } tap(g, p, 92, SETTINGS_Y0 + 2 * SETTINGS_STEP + 12); }
-  tap(g, p, 92, SETTINGS_Y0 + 3 * SETTINGS_STEP + 12); expect(S_SETTINGS, "page 3 back");
+  tap(g, p, 92, SETTINGS_Y0 + 4 * SETTINGS_STEP + 12); expect(S_SETTINGS, "page 3 back");
   tap(g, p, 92, SETTINGS_Y0 + 5 * SETTINGS_STEP + 12); expect(S_SETTINGS, "page 2 back");
   tap(g, p, 92, SETTINGS_Y0 + 5 * SETTINGS_STEP + 12); expect(S_MAIN, "back");
-  // the screen: laid flat it goes off; picking it up leaves it off; a tap or the button turns it on
+  // the screen: left untouched it goes off (Auto off); a tap or the button turns it on
   {
-    p.ax = 0; p.ay = 0; p.az = 1; run(g, p, 6.5f);
-    if (g.displayOn()) { printf("FAIL flat for 6 s: the screen should be off\n"); bad++; }
-    for (int i = 0; i < 40; i++) { const float k = i / 40.0f; p.ay = k; p.az = 1 - k; p.ax = (i & 1) ? 0.3f : -0.3f; step(g, p); }   // picked up and tilted
-    p.ax = 0; p.ay = 1; p.az = 0; run(g, p, 2.0f);
-    if (g.displayOn()) { printf("FAIL picking it up turned the screen on\n"); bad++; }
+    g.sv.eq[2] = 0; run(g, p, 6.5f);                                        // Auto off: 5 Sec
+    if (!g.displayOn()) { printf("FAIL the Auto off timer ran with the platform saying no\n"); bad++; }
+    p.autoOff = true; run(g, p, 0.2f);
+    if (g.displayOn()) { printf("FAIL untouched for 6 s: the screen should be off\n"); bad++; }
     tap(g, p, 92, 120); run(g, p, 0.2f);
     if (!g.displayOn()) { printf("FAIL a tap didn't turn the screen on\n"); bad++; }
     if (g.scr != S_MAIN) { printf("FAIL the waking tap also did something (screen %d)\n", (int)g.scr); bad++; }
@@ -364,13 +374,13 @@ static int cmdFlows() {
     if (g.displayOn()) { printf("FAIL the button didn't turn the screen off\n"); bad++; }
     p.button = true; run(g, p, 0.3f);
     if (!g.displayOn()) { printf("FAIL the button didn't turn the screen on\n"); bad++; }
-    g.sv.eq[2] = 2; p.ax = 0; p.ay = 0; p.az = 1; run(g, p, 7.0f);          // Auto off: 15 Sec
+    g.sv.eq[2] = 2; run(g, p, 7.0f);                                        // Auto off: 15 Sec
     if (!g.displayOn()) { printf("FAIL Auto off 15 Sec: off after 7 s\n"); bad++; }
     run(g, p, 9.0f);
     if (g.displayOn()) { printf("FAIL Auto off 15 Sec: still on after 16 s\n"); bad++; }
     tap(g, p, 92, 120); g.sv.eq[2] = 1; run(g, p, 200.0f);                   // Never: stays on (dimmed), even past 3 minutes
     if (!g.displayOn()) { printf("FAIL Auto off Never: the screen went off\n"); bad++; }
-    g.sv.eq[2] = 0; p.ax = 0; p.ay = 1; p.az = 0;
+    g.sv.eq[2] = 3; p.autoOff = false;
   }
   { // squeezed out at 11pm (their bedtime): awake through the landing and the first 2 minutes, then off to sleep
     SimPlat q; Game h(&q); h.begin();
@@ -382,7 +392,7 @@ static int cmdFlows() {
     h.simulate(100, false); run(h, q, 0.3f);
     if (h.pet.sleeping) { printf("FAIL a new blob fell asleep within 2 minutes\n"); bad++; }
     h.simulate(NEWBORN_AWAKE - 100 - 60, false); run(h, q, 0.3f);
-    if (h.pet.sleeping && !h.pet.napping) { printf("FAIL a new blob at 11pm went to bed within its first 30 minutes (the test nap aside)\n"); bad++; }
+    if (h.pet.sleeping && h.pet.nap <= 0) { printf("FAIL a new blob at 11pm went to bed within its first 30 minutes (the test nap aside)\n"); bad++; }
     h.simulate(200, false); run(h, q, 0.3f);
     if (!h.pet.sleeping) { printf("FAIL a new blob at 11pm didn't go to sleep after its first 30 minutes\n"); bad++; }
   }
@@ -391,11 +401,11 @@ static int cmdFlows() {
     tap(h, q, 92, 195); tap(h, q, 92, 100); tap(h, q, 92, 182); q.setClock(12, 0); run(h, q, 1.5f); tapDot(h, q, 20, 14); run(h, q, SQUEEZE_SECS + 0.5f);
     h.endNewborn(); h.simulate(200, false); run(h, q, 0.5f);   // past the first 30 minutes
     PetData& d = h.pet.d; d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.hunger = 90; d.fun = 90; d.droppings = 0; d.floorMess = 0;
-    d.digestTimer = 1e6f; run(h, q, 4.0f); d.energy = 30; tapIcon(h, q, IC_LIGHT); h.simulate(5, false); run(h, q, 0.3f);   // lights off in the day: a nap
-    if (!h.pet.sleeping) { printf("FAIL no nap with the light off (scr %d light %d energy %.0f exploring %d age %.0f)\n", (int)h.scr, (int)h.pet.d.pad1[1] & 1, d.energy, (int)d.exploring, d.age); bad++; }
+    d.digestTimer = 1e6f; run(h, q, 4.0f); h.pet.nap = 600; tapIcon(h, q, IC_LIGHT); h.simulate(5, false); run(h, q, 0.3f);   // a nap (with the light off)
+    if (!h.pet.sleeping) { printf("FAIL no nap with the light off (scr %d light %d energy %.0f exploring %d age %.0f)\n", (int)h.scr, (int)h.pet.d.pad1[1] & 1, 0.0f, (int)d.exploring, d.age); bad++; }
     d.digestTimer = 20; h.simulate(300, false);
     if (d.droppings || d.floorMess) { printf("FAIL pooped while napping\n"); bad++; }
-    tapIcon(h, q, IC_LIGHT); d.energy = 90; h.pet.wakeGently(); h.simulate(40, false); run(h, q, 0.5f);
+    tapIcon(h, q, IC_LIGHT); h.pet.nap = 0; h.pet.wakeGently(); h.simulate(40, false); run(h, q, 0.5f);
     if (!d.droppings) { printf("FAIL no poop after waking\n"); bad++; }
     if (h.anim() != AN_POTTY) { printf("FAIL no trip to the box after waking (anim %d)\n", h.anim()); bad++; }
     d.bubblesOnFloor = 0; d.giftOnFloor = 0;   // (a crowded floor leaves no room to wander)
@@ -426,16 +436,17 @@ static int cmdFlows() {
   if (g.pet.d.droppings != 2) { printf("FAIL leaving the scrub early cleaned\n"); bad++; }
   g.pet.d.droppings = 0;
   // POOP UP is in the Play menu now
-  g.pet.d.energy = 90; tapIcon(g, p, IC_PLAY); expect(S_MENU, "play menu");
-  tapDot(g, p, 30, 20); expect(S_LITTER, "POP from the Play menu");
-  run(g, p, POOPUP_INTRO + 0.2f); litterSolve(g, p, true);
-  run(g, p, 2.0f); expect(S_LITTER, "POOP UP: the score");
-  tapDot(g, p, 20, 14); expect(S_MAIN, "POOP UP: tap the score away");
+  tapIcon(g, p, IC_PLAY); expect(S_MENU, "play menu");
+  tapDot(g, p, 30, 20); expect(S_POP, "POP from the Play menu");
+  popPlay(g, p);
+  run(g, p, 2.6f); expect(S_POP, "POP: the score");
+  if (g.pop_.phase != 4) { printf("FAIL POP: no result card (phase %d)\n", g.pop_.phase); bad++; }
+  tapDot(g, p, 20, 14); expect(S_MAIN, "POP: tap the score away");
   tapIcon(g, p, IC_LITTER); expect(S_MAIN, "nothing to scoop");
   // a poop while you're in a menu still plays the litter box animation when you come back
   g.pet.d.digestTimer = 2.5f; g.pet.d.resent = 0;
   tapIcon(g, p, IC_METER); g.simulate(3, false); run(g, p, 0.3f); expect(S_METER, "meter");
-  g.pet.d.energy = 90; tapIcon(g, p, IC_PLAY); run(g, p, 0.3f); expect(S_MENU, "play menu"); tapIcon(g, p, IC_PLAY); run(g, p, 0.2f);
+  tapIcon(g, p, IC_PLAY); run(g, p, 0.3f); expect(S_MENU, "play menu"); tapIcon(g, p, IC_PLAY); run(g, p, 0.2f);
   expect(S_ANIM, "potty shown after menu");
   run(g, p, 3.5f);
   if (!g.nameBuf()[0]) { printf("FAIL no starting name\n"); bad++; }
@@ -473,7 +484,7 @@ static int cmdFuzz(int seeds) {
       else if (k < 65) { int x2 = rnd(W), y2 = rnd(H); for (int i = 0; i <= 10; i++) step(g, p, true, x + (x2 - x) * i / 10, y + (y2 - y) * i / 10); step(g, p); }
       else if (k < 80) run(g, p, 0.5f + rnd(30) / 10.0f);
       else if (k < 88) g.simulate((float)(60 * (1 + rnd(120))), false);
-      else if (k < 90) { p.ax = 2.0f; for (int i = 0; i < 6; i++) { p.ax = -p.ax; step(g, p); } p.ax = 0; }
+      else if (k < 90) run(g, p, 0.2f);
       else if (k < 92) { p.ms += 1000u * (uint32_t)rnd(400); step(g, p); }   // long pause (screen goes off)
       else run(g, p, 0.1f);
       // invariants
@@ -498,7 +509,7 @@ struct DodgeBot {
     SimPlat p; p.ms = 1000 + seed * 7919;
     Game g(&p); g.begin();
     tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run2(g, p, SQUEEZE_SECS + 0.2f); g.simulate(70, false); run2(g, p, 3);
-    g.pet.d.energy = 100; g.pet.d.hunger = 100; g.pet.rng = 1234567u + seed * 99991u;
+    g.pet.d.hunger = 100; g.pet.rng = 1234567u + seed * 99991u;
     g.debugAct(5); step(g, p);
     const int gs = g.gameSprite();
     const int w = spriteW(gs), cy = MH - 1 - spriteH(gs);
@@ -545,7 +556,7 @@ static int cmdLessons() {
     printf("  min %3d: wants icon %d (reason %d)\n", min, want, (int)g.callReason());
     tapIcon(g, p, want); run(g, p, 0.3f);
     if (g.scr == S_MENU) { tapDot(g, p, 10, 4); run(g, p, 0.5f); }
-    if (g.scr == S_LITTER) { litterSolve(g, p, false); run(g, p, 2.0f); }
+    if (g.scr == S_POP) { popPlay(g, p); run(g, p, 2.6f); }
     if (g.scr == S_SCRUB) { scrubSolve(g, p); run(g, p, 2.5f); }
     if (g.scr == S_DODGE || g.scr == S_METER) { tapIcon(g, p, IC_METER); g.debugAct(-1); }
     run(g, p, 3.5f);
@@ -571,7 +582,7 @@ static int cmdTrain(const char* dir) {
   SimPlat p; Game g(&p); g.begin();
   tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f);
   g.pet.d.pad2 = 0xC0FF; g.simulate(70, false); run(g, p, 4);
-  g.pet.d.hunger = g.pet.d.fun = g.pet.d.health = 90; g.pet.d.energy = 90; g.pet.d.droppings = 0;
+  g.pet.d.hunger = g.pet.d.fun = g.pet.d.health = 90; g.pet.d.droppings = 0;
   // asleep, lights off
   g.idleSec = 100; run(g, p, 2.0f);
   printf("sleeping %d\n", (int)g.pet.sleeping);
@@ -589,7 +600,7 @@ static int cmdTouch() {
   SimPlat p; p.ms = 5000;
   Game g(&p); g.begin();
   tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); g.simulate(70, false); run(g, p, 3);
-  g.pet.d.hunger = 100; g.pet.d.energy = 100; g.pet.d.giftOnFloor = GIFT_FLOWER;
+  g.pet.d.hunger = 100; g.pet.d.giftOnFloor = GIFT_FLOWER;
   run(g, p, 1);
   // a gift drawn at dots (0..7, 23..27); tap 4 dots above it
   const int g0 = g.pet.d.giftCount;
@@ -602,14 +613,15 @@ static int cmdTouch() {
   run(g, p, g.eatSecs() + 0.5f);
   g.debugAct(-1); run(g, p, 0.3f);
   run(g, p, 0.5f);
-  // POOP UP: a tap near a poop bubble pops it
-  g.debugAct(13); run(g, p, POOPUP_INTRO + 0.2f);
-  check(g.scr == S_LITTER, "POOP UP open");
-  { int x = 0, y = 0; for (int i = 0; i < 30 * 20 && !litterBlocker(g, x, y); i++) step(g, p);
-    check(litterBlocker(g, x, y), "a clear bubble blocks the way");
-    tapDot(g, p, x + 1, y + 1); run(g, p, 0.3f);
-    int x2, y2; bool still = false; for (int i = 0; i < LITTER_BUBBLES; i++) { int cx, cy; bool cp; if (g.lgBubble(i, cx, cy, cp) && !cp && cx == x && cy == y) still = true; (void)x2; (void)y2; }
-    check(!still, "a tap just beside a clear bubble pops it"); }
+  // POP: a finger down on the LCD takes aim, lifting it fires
+  g.debugAct(13); run(g, p, POP_CARD_SECS + 0.2f);
+  check(g.scr == S_POP && g.pop_.phase == 1, "POP open, the card gone");
+  step(g, p, true, 40, MY + 60); step(g, p, true, 60, MY + 60);
+  check(g.pop_.aiming && g.pop_.phase == 1 && g.pop_.ang < 0, "POP: a finger on the LCD aims (left of the middle: to the left)");
+  step(g, p, true, 150, MY + 150);
+  check(g.pop_.aiming && g.pop_.ang > 0.5f, "POP: the aim follows the finger, even off the LCD");
+  step(g, p);
+  check(g.pop_.phase == 2, "POP: lifting the finger fires");
   g.debugAct(-1); run(g, p, 0.5f);
 
   return fails ? 1 : (printf("touch: all ok\n"), 0);
@@ -624,7 +636,7 @@ static int cmdNewborn() {
   tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); p.setClock(23, 0); run(g, p, 1.5f);   // bedtime
   tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f);
   bool slept = false;
-  for (int m = 0; m < 29; m++) { g.pet.d.energy = 40; g.simulate(60, false); run(g, p, 0.1f); if (g.pet.sleeping && !g.pet.napping) slept = true; }
+  for (int m = 0; m < 29; m++) { g.simulate(60, false); run(g, p, 0.1f); if (g.pet.sleeping && g.pet.nap <= 0) slept = true; }
   check(!slept, "no bedtime in the first 29 minutes, at night (naps aside)");
   for (int m = 0; m < 4; m++) { g.simulate(60, false); run(g, p, 0.1f); }
   g.simulate(60, false); run(g, p, 0.5f);
@@ -669,145 +681,6 @@ static int cmdName() {
   return fails ? (printf("name: %d FAILED\n", fails), 1) : (printf("name: all ok\n"), 0);
 }
 
-static int cmdLitter() {
-  int fails = 0;
-  auto check = [&](bool ok, const char* what) { printf("  %-52s %s\n", what, ok ? "ok" : "FAIL"); if (!ok) fails++; };
-  for (int seed = 0; seed < 40; seed++) {
-    SimPlat p; p.ms = 5000 + seed * 977;
-    Game g(&p); g.begin();
-    tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); g.simulate(70, false); run(g, p, 3);
-    g.pet.d.hunger = g.pet.d.energy = 100; g.pet.rng = 99991u * (seed + 1);
-    g.pet.d.droppings = 1 + seed % 6; g.pet.d.floorMess = seed % 3; g.pet.d.digestTimer = 1e6f;   // (no new poops mid-test)
-    const int box = g.pet.d.droppings;
-    g.debugAct(13); run(g, p, POOPUP_INTRO + 0.2f);
-    if (g.scr != S_LITTER) { check(false, "POOP UP opens"); continue; }
-    check(g.lgN() == POOPUP_N, "POOPUP_N poop bubbles");
-    { run(g, p, 1.5f); int top = 0, low = 0, overlapLow = 0; int bx[LITTER_BUBBLES], by[LITTER_BUBBLES], n = 0;
-      for (int i = 0; i < LITTER_BUBBLES; i++) { int cx, cy; bool pp; if (g.lgBubble(i, cx, cy, pp)) { if (!pp) { if (cy - 3 >= 12) low++; else top++; bx[n] = cx; by[n] = cy; n++; } } }
-      for (int a = 0; a < n; a++) for (int b = a + 1; b < n; b++) if ((by[a] - 3 >= 15 || by[b] - 3 >= 15) && abs(bx[a] - bx[b]) < 5 && abs(by[a] - by[b]) < 5) overlapLow++;
-      if (seed < 3 || top + low < 10 || low < 3) printf("    after 1.7 s: %d empty at the top, %d in the middle/bottom\n", top, low);
-      check(top + low >= 10 && low >= 3, "a screenful of empty bubbles, middle and bottom too");
-      (void)overlapLow;
-      // a few seconds later they have eased apart: no two empty bubbles sit on each other
-      int worst = 99; for (int k = 0; k < 4; k++) { run(g, p, 0.75f);
-        int cx[LITTER_BUBBLES], cy[LITTER_BUBBLES], m = 0;
-        for (int i = 0; i < LITTER_BUBBLES; i++) { int x2, y2; bool pp; if (g.lgBubble(i, x2, y2, pp) && !pp) { cx[m] = x2; cy[m] = y2; m++; } }
-        if (k >= 2) for (int a2 = 0; a2 < m; a2++) for (int b2 = a2 + 1; b2 < m; b2++) { const int dd = (cx[a2] - cx[b2]) * (cx[a2] - cx[b2]) + (cy[a2] - cy[b2]) * (cy[a2] - cy[b2]); if (dd < worst) worst = dd; } }
-      if (seed < 3) printf("    then the closest two empty bubbles: %.1f dots apart (7 = rims touching)\n", sqrtf((float)worst));
-      check(worst >= 25, "after a few seconds they've spread out (no two sit on each other)"); }
-    int x, y;
-    for (int i = 0; i < 30 * 15 && !litterBlocker(g, x, y); i++) step(g, p);
-    { int px_, py_; bool far_ = litterBlocker(g, x, y);
-      for (int i = 0; i < LITTER_BUBBLES && far_; i++) { bool pp; if (g.lgBubble(i, px_, py_, pp) && pp && (px_ - x) * (px_ - x) + (py_ - y) * (py_ - y) < 36) far_ = false; }
-      if (far_) { const int got0 = g.lgGot(), miss0 = g.lgMisses(); tapDot(g, p, x, y); run(g, p, 0.1f); check(g.lgGot() - got0 <= 1 && g.lgMisses() == miss0, "popping a clear bubble is harmless"); } }
-    if (seed % 4 == 0) {   // tapping a poop bubble splats it: a miss, redone later
-      for (int i = 0; i < 30 * 10 && !litterFind(g, true, x, y); i++) step(g, p);
-      int cx, cy; const bool nearClear = litterFind(g, true, x, y) && litterBlocker(g, cx, cy) && abs(cx - x) < 9 && abs(cy - y) < 9;
-      if (litterFind(g, true, x, y) && !nearClear) { tapDot(g, p, x, y); run(g, p, 0.2f); check(g.lgMisses() == 1 && g.lgGot() == 0, "tapping a poop bubble splats it (a miss)"); }
-    }
-    const float fun0 = g.pet.d.fun = 30;
-    litterSolve(g, p, false);
-    run(g, p, 2.0f);
-    check(g.scr == S_LITTER && g.lgGot() == POOPUP_N, "the score after the last poop");
-    check(g.pet.d.fun > fun0, "POOP UP is fun");
-    tapDot(g, p, 20, 14); run(g, p, 0.3f);
-    check(g.scr == S_MAIN, "tap the score away");
-    check(g.pet.d.droppings == box, "POOP UP leaves the real box alone");
-    // leaving partway
-    g.scr = S_MAIN; run(g, p, 0.5f);
-    g.debugAct(13); run(g, p, POOPUP_INTRO + 0.2f);
-    for (int i = 0; i < 30 * 40 && g.lgGot() == 0; i++) { if (litterBlocker(g, x, y)) tapDot(g, p, x, y); else step(g, p); }
-    tapIcon(g, p, IC_PLAY); run(g, p, 0.3f);
-    check(g.scr == S_MAIN, "the Play icon leaves POOP UP");
-  }
-  // poop pacing by stage, and the cleaning game works in every stage of life
-  { const float ages[5] = {600, BABY_END + 60, CHILD_END + 60, TEEN_END + 60, AGE_BLORBUS + 60}, mins[5] = {3, 6, 10, 15, 20};
-    for (int st = 0; st < 5; st++) {
-      char b[80]; snprintf(b, sizeof b, "stage %d: a poop every %.0f minutes", st, mins[st]);
-      check(fabsf(poopInterval(ages[st]) - mins[st] * 60.0f) < 1.0f, b);
-      SimPlat p; p.ms = 7000 + st; Game g(&p); g.begin();
-      tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); g.simulate(70, false); run(g, p, 3);
-      g.pet.d.pad2 = 0xE0FF; g.pet.d.nextSick = 1e9f; g.pet.d.age = ages[st]; g.pet.d.hunger = g.pet.d.energy = 100;
-      g.pet.d.pad0[0] = st == 0 ? 0 : st == 1 ? Game::packLooks(1, 0, 0) : Game::packLooks(1, 1, 1); if (st == 4) g.evoSetChoice(4, 1);
-      g.pet.d.droppings = 2; g.pet.d.floorMess = 0; g.pet.d.digestTimer = 1e6f; g.scr = S_MAIN; g.pet.sleeping = false; run(g, p, 6);
-      g.scr = S_MAIN; run(g, p, 0.5f);
-      tapIcon(g, p, IC_LITTER); run(g, p, 0.2f);
-      const bool opened = g.scr == S_SCRUB; if (!opened) printf("   (stage %d: screen %d, droppings %d, sleeping %d, exploring %d)\n", st, (int)g.scr, (int)g.pet.d.droppings, (int)g.pet.sleeping, (int)g.pet.d.exploring);
-      if (opened) { scrubSolve(g, p); run(g, p, 2.5f); }
-      snprintf(b, sizeof b, "stage %d: the scrub opens and clears the box", st);
-      check(opened && g.scr == S_MAIN && g.pet.d.droppings == 0, b);
-      // and a real poop turns up on schedule
-      g.pet.d.digestTimer = poopInterval(ages[st]); g.pet.d.hunger = 100;
-      const float sec = poopInterval(ages[st]) * 1.15f;
-      g.pet.d.age = ages[st]; g.simulate(sec, false);
-      snprintf(b, sizeof b, "stage %d: a poop appears within %.0f minutes", st, mins[st] * 1.15f);
-      check(g.pet.d.droppings + g.pet.d.floorMess >= 1, b);
-    } }
-  // a human-ish player: looks every 0.3 s, taps a blocking bubble but up to 2 dots off; must always win, and fast enough
-  { int won = 0, slow = 0, worstT = 0, splats = 0;
-    for (int seed = 0; seed < 40; seed++) {
-      SimPlat p; p.ms = 12000 + seed * 521;
-      Game g(&p); g.begin();
-      tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); g.simulate(70, false); run(g, p, 3);
-      g.pet.d.hunger = g.pet.d.energy = 100; g.pet.rng = 31337u * (seed + 1); g.pet.d.droppings = 6; g.pet.d.floorMess = 0;
-      g.debugAct(13); run(g, p, POOPUP_INTRO + 0.2f);
-      uint32_t rs = 91u * (seed + 5);
-      auto rnd = [&]() { rs = rs * 1664525u + 1013904223u; return rs >> 8; };
-      int frames = 0;
-      for (; g.scr == S_LITTER && g.lgGot() < g.lgN() && frames < 30 * 90; frames++) {
-        int x, y;
-        if (frames % 9 == 0 && litterBlocker(g, x, y)) tapDot(g, p, x + (int)(rnd() % 5) - 2, y + (int)(rnd() % 5) - 2); else step(g, p);
-      }
-      splats += g.lgMisses();
-      if (g.lgGot() == g.lgN()) won++;
-      if (frames >= 30 * 90) slow++;
-      if (frames > worstT) worstT = frames;
-    }
-    char b[100]; snprintf(b, sizeof b, "careless player wins %d/40 (slowest %.0f s, %d stray splats)", won, worstT / 30.0f, splats);
-    check(won == 40 && slow == 0, b); }
-  // a wall of clear bubbles across the screen with poop bubbles underneath: still clearable
-  { SimPlat p; p.ms = 20000; Game g(&p); g.begin();
-    tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); g.simulate(70, false); run(g, p, 3);
-    g.pet.d.hunger = g.pet.d.energy = 100; g.pet.d.droppings = 4; g.pet.d.floorMess = 0;
-    g.debugAct(13); run(g, p, POOPUP_INTRO + 0.2f);
-    for (int i = 0; i < LITTER_BUBBLES; i++) g.lgForce(i, false, 0, 0, 0);
-    for (int i = 0; i < 5; i++) g.lgForce(i, true, 0, 2.0f + i * 7.0f, 8.0f);
-    for (int i = 5; i < 7; i++) g.lgForce(i, true, 1, 6.0f + (i - 5) * 18.0f, 26.0f);
-    litterSolve(g, p, false); run(g, p, 2.5f);
-    check(g.lgGot() == g.lgN(), "a wall of clear bubbles can be cleared away"); }
-  // mash the screen: random presses, holds and drags everywhere (edges, off the LCD, the icons) for 60 s on 25 boards
-  for (int seed = 0; seed < 25; seed++) {
-    SimPlat p; p.ms = 9000 + seed * 313;
-    Game g(&p); g.begin();
-    tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); g.simulate(70, false); run(g, p, 3);
-    g.pet.d.hunger = g.pet.d.energy = 100; g.pet.rng = 4243u * (seed + 7); g.pet.d.droppings = 6; g.pet.d.floorMess = 2;
-    g.debugAct(13); run(g, p, POOPUP_INTRO + 0.2f);
-    uint32_t rs = 77u * (seed + 1);
-    auto rnd = [&]() { rs = rs * 1664525u + 1013904223u; return rs >> 8; };
-    bool sane = true; int maxGot = 0, frames = 0;
-    for (int i = 0; i < 30 * 60 && g.scr == S_LITTER; i++, frames++) {
-      const int mode = rnd() % 6;
-      const int x = rnd() % (W + 40) - 20, y = rnd() % (H + 40) - 20;
-      if (mode == 0) step(g, p);
-      else if (mode == 1) { step(g, p, true, x, y); step(g, p); }                       // a tap
-      else if (mode == 2) { step(g, p, true, x, y); step(g, p, true, x, y); step(g, p, true, x + 3, y + 3); step(g, p); }   // a hold + drag
-      else if (mode == 3) { int bx, by; if (litterFind(g, rnd() & 1, bx, by)) { step(g, p, true, MX / 2 + bx * DOT / 2, MY / 2 + by * DOT / 2); step(g, p); } else step(g, p); }   // aimed at a bubble
-      else if (mode == 4) { for (int k = 0; k < 4; k++) step(g, p, true, x, y); step(g, p); }  // a long press
-      else { step(g, p, true, x, y); step(g, p); step(g, p, true, x, y); step(g, p); }         // a double tap
-      if (g.scr != S_LITTER) break;
-      if (g.lgGot() > g.lgN() || g.lgGot() < maxGot || g.lgMisses() < 0) sane = false;
-      maxGot = g.lgGot();
-      int live = 0; for (int k = 0; k < 9; k++) { int bx, by; bool pp; if (g.lgBubble(k, bx, by, pp)) { live++; if (bx < -10 || bx > MW + 10 || by < -12 || by > MH + 12) sane = false; } }
-      if (live > 9) sane = false;
-    }
-    check(sane, "mashing: counts only go up, bubbles stay in range");
-    if (g.scr == S_LITTER) { tapIcon(g, p, IC_PLAY); run(g, p, 0.3f); }
-    check(g.scr != S_LITTER, "mashing: the game can always be left");
-    check(g.pet.d.droppings >= 0 && g.pet.d.droppings <= 6, "mashing: poop count stays valid");
-  }
-  return fails ? (printf("litter: %d FAILED\n", fails), 1) : (printf("litter: all ok (40 boards)\n"), 0);
-}
-
 // growth: a new stage reached while asleep waits for them to wake up
 static int cmdGrowth() {
   int fails = 0;
@@ -817,7 +690,7 @@ static int cmdGrowth() {
     SimPlat p; p.ms = 4000 + st * 31; Game g(&p); g.begin();
     tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); g.simulate(70, false); g.endNewborn(); run(g, p, 3);
     g.pet.d.pad2 = 0; g.pet.d.pad0[0] = st == 0 ? 0 : st == 1 ? 1 : 0x05;
-    g.pet.d.hunger = g.pet.d.fun = g.pet.d.energy = 90;
+    g.pet.d.hunger = g.pet.d.fun = 90;
     // asleep with the light off when the stage arrives
     g.pet.d.pad2 |= 0x2000; g.pet.d.nextSick = 1e9f;
     p.setClock(23, 0); run(g, p, 1.5f);   // night: they are asleep (the clock is read once a second)
@@ -826,14 +699,14 @@ static int cmdGrowth() {
     for (int i = 0; i < 90; i++) { g.pet.sleeping = true; step(g, p); if (g.scr == S_EVOLVE || g.anim() == AN_LEVELUP) opened = true; }
     char b[64]; snprintf(b, sizeof b, "stage %d: no picker while asleep, light off", st + 1); check(!opened, b);
     // asleep with the light on (a nap)
-    p.setClock(13, 0); g.pet.d.energy = 8; g.pet.napping = true; run(g, p, 1.5f);   // daytime nap: worn out
-    g.pet.d.pad1[1] = 0; g.pet.d.energy = 8; g.pet.sleeping = true; g.pet.napping = true;
+    p.setClock(13, 0); g.pet.nap = 600; run(g, p, 1.5f);   // daytime nap: worn out
+    g.pet.d.pad1[1] = 0; g.pet.sleeping = true; g.pet.nap = 600;
     int asleepFrames = 0;
     for (int i = 0; i < 90; i++) { g.idleSec = 100; step(g, p); if (g.pet.sleeping) asleepFrames++; if ((g.scr == S_EVOLVE || g.anim() == AN_LEVELUP) && g.pet.sleeping) opened = true; }
     if (asleepFrames < 80) printf("    (nap only lasted %d frames)\n", asleepFrames);
     snprintf(b, sizeof b, "stage %d: no picker during a nap", st + 1); check(!opened, b);
     // wakes up: now it opens
-    g.pet.sleeping = false; g.pet.napping = false; g.pet.d.energy = 90; g.idleSec = 0;
+    g.pet.sleeping = false; g.idleSec = 0;
     // first the level-up: they pulse small-big three times with sounds, and only then the picker
     const int boing0 = p.soundCount[SND_BOING], coin0 = p.soundCount[SND_COIN], win0 = p.soundCount[SND_WIN];
     int frames = 0, lvl = 0, minLit = 9999, maxLit = 0; bool pickerEarly = false;
@@ -870,7 +743,7 @@ static int cmdEatShots(const char* dir, int child) {
   outDir = dir;
   SimPlat p; p.ms = 99; Game g(&p); g.begin();
   tap(g, p, 92, 195); tap(g, p, 92, 100); tap(g, p, 92, 182); tapDot(g, p, 20, 14); run(g, p, SQUEEZE_SECS + 0.2f); g.simulate(70, false); run(g, p, 3);
-  PetData& d = g.pet.d; d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.pad0[0] = (uint8_t)child; d.age = BABY_END + 60; d.hunger = 20; d.energy = 90;
+  PetData& d = g.pet.d; d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.pad0[0] = (uint8_t)child; d.age = BABY_END + 60; d.hunger = 20; 
   g.scr = S_MAIN; g.pet.sleeping = false; run(g, p, 1);
   g.debugAct(0);
   for (int i = 0; i < 12 * 30; i++) { step(g, p); if (i % 12 == 0) shot(g, "eat"); }
@@ -953,7 +826,7 @@ static int cmdNewGames() {
   int bestAll = 0;
   for (int st = 0; st < 4; st++) {
     d.pad0[0] = st == 0 ? 0 : st == 1 ? Game::packLooks(1, 0, 0) : st == 2 ? Game::packLooks(1, 1, 0) : Game::packLooks(1, 1, 1);
-    d.age = ages[st]; d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.hunger = d.fun = d.energy = 90; d.health = 100;
+    d.age = ages[st]; d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.hunger = d.fun = 90; d.health = 100;
     g.scr = S_MAIN; g.pet.sleeping = false; run(g, p, 0.5f);
     // RUN: hands off, they run into the first thing
     g.debugAct(11); run(g, p, 0.3f);
@@ -961,7 +834,7 @@ static int cmdNewGames() {
     for (int i = 0; i < 30 * 10 && g.rn_.phase < 3; i++) step(g, p);
     check(g.rn_.phase == 3 && g.rn_.score < 40, "RUN: not jumping ends the run");
     // RUN: a bot that jumps just before things reach it
-    g.debugAct(-1); run(g, p, 0.3f); d.energy = 90; g.debugAct(11); run(g, p, 0.3f);
+    g.debugAct(-1); run(g, p, 0.3f); g.debugAct(11); run(g, p, 0.3f);
     int jumps = 0, vf = 0;
     for (int pol = 0; pol < 3; pol++) {
       const int fr = runProof(g, pol, false, 30 * 90, vf, jumps, 100 + st * 7 + pol);
@@ -985,13 +858,13 @@ static int cmdNewGames() {
     printf("  look %d: orbit bot caught %d stars, %d hits\n", (int)g.form(), g.orb_.stars, g.orb_.hits);
     check(g.orb_.phase == 3 && g.orb_.hits == 0 && g.orb_.stars >= 20, "ORBIT: hopping to the stars and away from rocks works");
     if (getenv("GAMES_SHOTS") && st == 3) { outDir = getenv("GAMES_SHOTS"); shot(g, "orbit_result"); }
-    g.debugAct(-1); run(g, p, 0.3f); d.energy = 90; g.debugAct(12); run(g, p, 0.3f);
+    g.debugAct(-1); run(g, p, 0.3f); g.debugAct(12); run(g, p, 0.3f);
     run(g, p, 40);   // hands off: it ends by itself
     check(g.orb_.phase == 3, "ORBIT: it ends by itself");
     if (st == 3) {   // twenty different skies: a bot that hops in time never gets hit
       int bad = 0;
       for (int sd = 0; sd < 20; sd++) {
-        g.debugAct(-1); run(g, p, 0.2f); d.energy = 90; g.pet.rng = 7919u * (sd + 3); g.debugAct(12); run(g, p, 0.2f);
+        g.debugAct(-1); run(g, p, 0.2f); g.pet.rng = 7919u * (sd + 3); g.debugAct(12); run(g, p, 0.2f);
         for (int i = 0; i < 30 * 40 && g.orb_.phase < 3; i++) orbitBot(g, p);
         if (g.orb_.hits) bad++;
       }
@@ -1013,8 +886,8 @@ static int cmdBlorbus() {
   bool seenBig[F_COUNT] = {};
   auto ready = [&](int c, int t, int a) {
     d.pad0[0] = Game::packLooks(c + 1, t + 1, a + 1); d.pad1[1] &= ~(7 << 2); d.pad0[1] = 0;
-    d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.age = AGE_BLORBUS + 100; d.hunger = d.fun = d.energy = 90; d.health = 100;
-    g.scr = S_MAIN; g.pet.sleeping = false; g.pet.napping = false; d.pad1[1] &= ~1;
+    d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.age = AGE_BLORBUS + 100; d.hunger = d.fun = 90; d.health = 100;
+    g.scr = S_MAIN; g.pet.sleeping = false; d.pad1[1] &= ~1;
   };
   for (int c = 0; c < 3; c++) {
     d.pad0[0] = Game::packLooks(c + 1, 0, 0);
@@ -1092,8 +965,8 @@ static int cmdTree() {
       const int na = g.evoCount(3);
       check(na >= 1 && na <= 5, "a final list holds 1-5 looks");
       for (int a = 0; a < na; a++) {
-        d.pad0[0] = 0; d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.age = BABY_END + 30; d.hunger = d.fun = d.energy = 90; d.health = 100;
-        g.scr = S_MAIN; g.pet.sleeping = false; g.pet.napping = false; d.pad1[1] &= ~1;
+        d.pad0[0] = 0; d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.age = BABY_END + 30; d.hunger = d.fun = 90; d.health = 100;
+        g.scr = S_MAIN; g.pet.sleeping = false; d.pad1[1] &= ~1;
         const float ages[3] = {BABY_END + 30, CHILD_END + 30, TEEN_END + 30};
         const int sel[3] = {c, t, a};
         char nm[96];
@@ -1182,19 +1055,38 @@ static int cmdEndings() {
     if (c.want == END_SICK && (awakeH < 28 || awakeH > 32)) fail("an untreated sickness should take ~30 awake hours");
     if (!(g.sv.hall[0].flags & HE_HOURS) || g.sv.hall[0].look == 0) fail("log entry");
     tapDot(g, p, 20, 14); run(g, p, 0.2f);                                   // a tap while they're still melting does nothing
+    for (int k = 0; k < 45; k++) step(g, p, true, MX + 80, MY + 50);         // a long press during an ending: Settings
+    step(g, p);
+    if (g.scr != S_SETTINGS) fail("Settings during an ending");
+    tap(g, p, 92, SETTINGS_Y0 + 5 * SETTINGS_STEP + 12); run(g, p, 0.2f);    // Back: the ending carries on where it was
+    if (g.scr != S_ENDING) fail("Back from Settings returns to the ending");
     run(g, p, ENDING_WAIT_AT + 30); tapDot(g, p, 20, 14); run(g, p, 0.2f);   // the dropper waits as long as it takes (that tap was the first squeeze)
-    if (g.scr != S_ENDING) fail("ending left before NEW BLOB");
+    if (g.scr != S_ENDING) fail("one squeeze left the ending");
     for (int i = 0; i < ENDING_PULLS - 2; i++) { for (int k = 0; k < 4; k++) step(g, p, true, MX + 80, MY + 50); step(g, p); run(g, p, 0.8f); }
-    run(g, p, 10); shakeDevice(g, p, 6); run(g, p, 0.3f);
+    run(g, p, 10);
     if (g.scr != S_ENDING) fail("two squeezes aren't enough");
-    for (int k = 0; k < 4; k++) step(g, p, true, MX + 80, MY + 50); step(g, p); run(g, p, 4.5f);   // the third
-    tapDot(g, p, 20, 14); run(g, p, 0.5f);
-    if (g.scr != S_ENDING) fail("NEW BLOB without the shake");
-    shakeDevice(g, p, 1); tapDot(g, p, 20, 14); run(g, p, 0.5f);
-    if (g.scr != S_ENDING) fail("one shake isn't enough");
-    shakeDevice(g, p, 6); run(g, p, 0.3f);
-    tapDot(g, p, 20, 14); run(g, p, 1.0f);
-    if (g.scr != S_SETUP_NAME) fail("NEW BLOB tap");
+    for (int k = 0; k < 4; k++) step(g, p, true, MX + 80, MY + 50); step(g, p); run(g, p, 1.0f);   // the third
+    // a finger back on the glass while the dropper rises: the name page waits for it to lift, and that press types nothing
+    for (int k = 0; k < 30 * 4; k++) step(g, p, true, MX + 80, MY + 50);
+    if (g.scr != S_ENDING) fail("the name page opened under a held finger");
+    step(g, p);
+    if (g.scr != S_SETUP_NAME) fail("name page after the third squeeze");
+    char nm[12]; strcpy(nm, g.nameBuf()); run(g, p, 0.3f);
+    if (!nm[0] || strcmp(nm, g.nameBuf())) fail("a press from the ending carried over to the name page");
+    // every kind of press on the name page works after an ending: Random name, a key, Let's goo!
+    tap(g, p, 92, 144); run(g, p, 0.1f);
+    if (!strcmp(nm, g.nameBuf())) fail("Random name after an ending");
+    { const int kx0 = (W - (7 * 22 + 6 * 2)) / 2, i = 'Z' - 'A'; tap(g, p, kx0 + (i % 7) * 24 + 11, 38 + (i / 7) * 22 + 10); run(g, p, 0.1f); }
+    if (strcmp(g.nameBuf(), "Z")) fail("a key after an ending");
+    tap(g, p, 92, 182); run(g, p, 0.5f);
+    if (g.scr != S_MAIN || g.form() != F_DROPPER || strcmp(g.pet.d.name, "Z")) fail("Let's goo! after an ending: the opening scene");
+    tapDot(g, p, 20, 14); run(g, p, 0.3f);                                    // one tap squeezes the dropper
+    if (g.form() != F_BABY || g.anim() != AN_SQUEEZE) fail("one tap starts the new blob");
+    for (int k = 0; k < 45; k++) step(g, p, true, MX + 80, MY + 50);          // a long press while the drop falls: Settings
+    step(g, p);
+    if (g.scr != S_SETTINGS) fail("Settings during the fall");
+    tap(g, p, 92, SETTINGS_Y0 + 5 * SETTINGS_STEP + 12); run(g, p, 0.2f);     // Back: the fall carries on
+    if (g.scr != S_ANIM || g.anim() != AN_SQUEEZE) fail("Back from Settings returns to the fall");
   }
   { // medicine stops a sickness; away never ends a life
     SimPlat p; Game g(&p); g.begin();
@@ -1250,8 +1142,8 @@ static int cmdEat() {
   PetData& d = g.pet.d;
   bool seen[F_COUNT] = {};
   int marshyWalls[2] = {0, 0};
-  auto calm = [&]() { d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.hunger = 30; d.fun = d.energy = 90; d.health = 100; d.droppings = 0; d.floorMess = 0; d.chonk = 30; d.sadness = 0; d.resent = 0;   // 100+ meals in a row: keep them from bursting
-                      g.scr = S_MAIN; g.pet.sleeping = false; g.pet.napping = false; d.pad1[1] &= ~1; d.digestTimer = 1e6f; };
+  auto calm = [&]() { d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.hunger = 30; d.fun = 90; d.health = 100; d.droppings = 0; d.floorMess = 0; d.chonk = 30; d.sadness = 0; d.resent = 0;   // 100+ meals in a row: keep them from bursting
+                      g.scr = S_MAIN; g.pet.sleeping = false; d.pad1[1] &= ~1; d.digestTimer = 1e6f; };
   auto eat = [&](int which) {
     const Form f = g.form();
     char b[96];
@@ -1315,13 +1207,13 @@ static int cmdBench() {
   d.pad2 = 0xE0FF; d.nextSick = 1e9f; d.pad0[0] = Game::packLooks(1, 1, 1); d.age = TEEN_END + 60; run(g, p, 3);
   auto timeIt = [&](const char* name, int frames, bool keep(Game&)) {
     const clock_t c0 = clock(); int n = 0;
-    for (int i = 0; i < frames; i++) { d.hunger = d.fun = d.energy = 90; d.health = 100; d.chonk = 30; if (!keep(g)) break; step(g, p); n++; }
+    for (int i = 0; i < frames; i++) { d.hunger = d.fun = 90; d.health = 100; d.chonk = 30; if (!keep(g)) break; step(g, p); n++; }
     const double us = (double)(clock() - c0) / CLOCKS_PER_SEC * 1e6 / (n ? n : 1);
     printf("  %-22s %7.1f us per frame (%d frames)\n", name, us, n);
   };
   g.scr = S_MAIN; timeIt("home screen", 60000, [](Game& gg) { gg.scr = S_MAIN; gg.idleSec = 0; return true; });
   g.debugAct(0); timeIt("eating routine", 200, [](Game& gg) { return gg.scr == S_ANIM; });
-  g.scr = S_MAIN; g.debugAct(2); timeIt("clean game", 600, [](Game& gg) { return gg.scr == S_LITTER; });
+  g.scr = S_MAIN; g.debugAct(2); timeIt("clean game", 600, [](Game& gg) { return gg.scr == S_SCRUB; });
   g.scr = S_MAIN; g.debugAct(5); timeIt("dodge", 300, [](Game& gg) { return gg.scr == S_DODGE; });
   return 0;
 }
@@ -1389,7 +1281,7 @@ struct NewTests {
   static void grown(Game& g, SimPlat& p, float age, uint8_t looks) {
     hatch(g, p); g.simulate(70, false); run(g, p, 3);
     PetData& d = g.pet.d; d.pad2 = 0xE0FF; d.sick[3] |= SF_BUG_DONE; d.age = age; d.pad0[0] = looks;
-    d.hunger = d.fun = d.energy = 80; d.health = 100; g.pet.sleeping = false; p.setClock(12, 0);
+    d.hunger = d.fun = 80; d.health = 100; g.pet.sleeping = false; p.setClock(12, 0);
     for (int i = 0; i < 300 && (g.scr == S_ANIM || g.scr == S_EVOLVE); i++) { if (g.scr == S_EVOLVE) { tapDot(g, p, MW / 2, 20); } step(g, p); }
     g.scr = S_MAIN; g.lastForm_ = g.form();
   }
@@ -1545,7 +1437,7 @@ struct NewTests {
     for (int f = F_BABY; f < F_COUNT; f++) {
       SimPlat p; Game g(&p); g.begin(); grown(g, p, CHILD_END + 60, Game::packLooks(1, 1, 0));
       if (!setLook(g, (Form)f)) continue;
-      g.pet.d.energy = 100; g.scr = S_MAIN; g.an_ = AN_NONE;
+      g.scr = S_MAIN; g.an_ = AN_NONE;
       int worst = -99;
       for (int i = 0; i < 12; i++) {
         g.pet.rng = 777u + i * 31u + f;
@@ -1581,7 +1473,7 @@ struct NewTests {
     { SimPlat q; q.store = p.store; Game h(&q); h.begin(); check(h.locked(), "the lock is saved"); }
     // time stands still: no ageing, no growing
     const Form f0 = g.form(); const float age0 = d.age;
-    for (int i = 0; i < 40; i++) { d.hunger = d.fun = d.energy = 90; d.health = 100; g.simulate(3600, false); }
+    for (int i = 0; i < 40; i++) { d.hunger = d.fun = 90; d.health = 100; g.simulate(3600, false); }
     check(d.age == age0 && g.form() == f0 && g.pendingEvolution() == 0, "40 hours on: not a minute older, same look, no picker");
     g.simulate(40 * 3600.0f, true);
     check(d.age == age0, "away for 40 hours: still no older");
@@ -1594,7 +1486,7 @@ struct NewTests {
     check(d.hunger < 5 && d.fun < 30, "they still get hungry and bored");
     check(g.pet.sickStack() > sick0, "an empty tummy still makes them sick");
     check(d.droppings + d.floorMess > 0, "they still poop");
-    g.pet.sleeping = false; g.pet.napping = false; p.setClock(12, 0); run(g, p, 1.0f);
+    g.pet.sleeping = false; p.setClock(12, 0); run(g, p, 1.0f);
     check(g.callReason() != CR_NONE, "they still call for help");
     // nothing ends them
     bool ended = false;
@@ -1605,7 +1497,7 @@ struct NewTests {
     g.simulate(60, false); run(g, p, 1.0f);
     check(!g.pet.ended && g.scr != S_ENDING, "every ending at once (and past the last day): none happens");
     // medicine and food still work
-    d.age = age0; d.chonk = 40; g.setScreen(S_MAIN); g.pet.sleeping = false; g.pet.napping = false; run(g, p, 0.5f);
+    d.age = age0; d.chonk = 40; g.setScreen(S_MAIN); g.pet.sleeping = false; run(g, p, 0.5f);
     { const int st = g.pet.sickStack(); if (st) { tapIcon(g, p, IC_MEDS); step(g, p); check(g.pet.sickStack() == st - 1, "medicine still cures"); run(g, p, 4.0f); } }
     // unlock: life goes on
     g.setScreen(S_MAIN); tapIcon(g, p, IC_LOCK); run(g, p, 0.3f);
@@ -1615,7 +1507,7 @@ struct NewTests {
     check(d.health >= 30 && d.resent <= 80 && d.sadness == 0, "unlocking a neglected fella leaves room to put things right");
     run(g, p, 4.5f);
     check(!g.pet.ended && g.scr == S_MAIN, "and they are still here after the padlock opens");
-    d.hunger = d.fun = d.energy = 90; d.health = 100; d.resent = 0; d.sadness = 0;
+    d.hunger = d.fun = 90; d.health = 100; d.resent = 0; d.sadness = 0;
     const float a1 = d.age; g.simulate(3600, false);
     check(d.age > a1 + 3000, "unlocked: they age again");
     d.age = AGE_BLORBUS + 100; d.pad0[0] = Game::packLooks(1, 1, 1);
@@ -1661,7 +1553,7 @@ struct NewTests {
     g.setScreen(S_MAIN); run(g, p, 0.2f);
     snap(c); tapIcon(g, p, IC_LIGHT); run(g, p, 0.2f); tapIcon(g, p, IC_LIGHT); run(g, p, 0.2f);
     check(got(c, SND_LIGHT_OFF) == 1 && got(c, SND_LIGHT_ON) == 1, "the light: one sound off, another on");
-    g.pet.sleeping = false; g.pet.napping = false; d.energy = 90; run(g, p, 0.5f); g.setScreen(S_MAIN);
+    g.pet.sleeping = false; run(g, p, 0.5f); g.setScreen(S_MAIN);
     snap(c); d.hunger = 100; tapIcon(g, p, IC_FEED); run(g, p, 2.0f);
     check(got(c, SND_NOPE) == 1, "full up: the refusal sound");
     g.setScreen(S_MAIN); d.hunger = 30; snap(c); tapIcon(g, p, IC_FEED); run(g, p, 12.0f);
@@ -1718,7 +1610,7 @@ struct NewTests {
     for (int f = F_BABY; f < F_COUNT; f++) {
       if (f == F_BB_BLOBBERT || f == F_BB_BALLBOI) continue;   // (the two giants nearly fill the screen: they lean on the box)
       if (!setLook(g, (Form)f)) continue;
-      g.scr = S_MAIN; g.an_ = AN_NONE; g.pet.sleeping = false; d.exploring = 0; d.droppings = 3; d.floorMess = 0; d.hunger = d.fun = d.energy = 80;
+      g.scr = S_MAIN; g.an_ = AN_NONE; g.pet.sleeping = false; d.exploring = 0; d.droppings = 3; d.floorMess = 0; d.hunger = d.fun = 80;
       run(g, p, 3.0f); g.scr = S_MAIN; g.an_ = AN_NONE;
       int idle, alt, sl; g.blobSprite((Form)f, idle, alt, sl);
       for (int i = 0; i < 30 * 25; i++) { step(g, p); d.droppings = 3; if (g.scr == S_MAIN && (int)g.blobX() + spriteW(idle) > BOX_X) { bad++; printf("    look %d stands on the box (x %d w %d)\n", f, (int)g.blobX(), spriteW(idle)); break; } }
@@ -1745,12 +1637,12 @@ struct NewTests {
   }
   void scrub() {
     printf("scrub\n");
-    float minMul = 99, maxMul = 0; int shapesSeen = 0, bad = 0;
+    float minMul = 99, maxMul = 0, tFew = 0, tMid = 0, tMany = 0; int shapesSeen = 0, bad = 0, nFew = 0, nMid = 0, nMany = 0;
     for (int seed = 0; seed < 40; seed++) {
-      const int mess = 1 + seed % 10;
+      const int mess = 1 + seed % (BOX_MAX + 4);
       SimPlat p; p.ms = 1000 + seed * 7717; Game g(&p); g.begin(); grown(g, p, CHILD_END + 60, Game::packLooks(1, 1, 0));
       g.pet.rng = 4243u * (seed + 1);
-      g.pet.d.droppings = (uint8_t)(mess > 6 ? 6 : mess); g.pet.d.floorMess = (uint8_t)(mess > 6 ? mess - 6 : 0); g.pet.d.digestTimer = 1e6f;
+      g.pet.d.droppings = (uint8_t)(mess > BOX_MAX ? BOX_MAX : mess); g.pet.d.floorMess = (uint8_t)(mess > BOX_MAX ? mess - BOX_MAX : 0); g.pet.d.digestTimer = 1e6f;
       tapIcon(g, p, IC_LITTER); run(g, p, 0.1f);
       const float need = g.sc_.need, base = g.sc_.base, mul = need / base;
       for (int i = 0; i < g.sc_.np; i++) { shapesSeen |= 1 << g.sc_.poo[i].shape; const auto& q = g.sc_.poo[i]; if (q.x < 0 || q.y < 0 || q.x >= MW || q.y >= MH) bad++; }
@@ -1759,18 +1651,22 @@ struct NewTests {
       const float easy = base / 108.0f;   // all easy, scrubbing briskly
       const float t = scrubSolve(g, p);
       run(g, p, 2.5f);
-      if (seed < 10) printf("    %2d mess: %.1fx the rubbing (all easy: %.1f s) -> clean in %.1f s\n", mess, mul, easy, t);
-      if (easy < 2.8f || easy > 5.6f || mul < 1.0f || mul > 5.0f || t > easy * mul * 1.35f || g.scr != S_MAIN || g.pet.d.droppings || g.pet.d.floorMess) bad++;
+      if (g.sc_.np != mess) bad++;   // every poop they've done is there to scrub
+      (mess <= 2 ? tFew : mess >= 10 ? tMany : tMid) += t; (mess <= 2 ? nFew : mess >= 10 ? nMany : nMid)++;
+      if (seed < BOX_MAX + 4) printf("    %2d mess: %.1fx the rubbing (all easy: %.1f s) -> clean in %.1f s\n", mess, mul, easy, t);
+      if (easy < 1.7f || easy > 17.5f || mul < 1.0f || mul > 2.0f || t > easy * mul * 1.35f + 0.5f || g.scr != S_MAIN || g.pet.d.droppings || g.pet.d.floorMess) bad++;
     }
-    check(!bad, "40 boards: cleaned, all easy takes 3-5 s, never more than 5x that");
+    check(!bad, "40 boards (1 to 16 poops): all there, cleaned, all easy takes 2 s for one and 17 s for 16, never more than 2x that");
+    { char c[110]; snprintf(c, sizeof c, "more poop is more scrubbing: %.1f s for 1-2, %.1f s for 3-9, %.1f s for 10 and up", tFew / nFew, tMid / nMid, tMany / nMany);
+      check(tMany / nMany > 3 * tFew / nFew && tMid / nMid > tFew / nFew && tMany / nMany < 35, c); }
     char b[90]; snprintf(b, sizeof b, "it varies: %.1fx to %.1fx the rubbing, %d poop shapes seen", minMul, maxMul, __builtin_popcount(shapesSeen));
-    check(maxMul - minMul > 1.0f && __builtin_popcount(shapesSeen) == 4, b);
+    check(maxMul - minMul > 0.3f && __builtin_popcount(shapesSeen) == 4, b);
   }
   void yeet() {
     printf("yeet\n");
     { // the whole flow, by touch
       SimPlat p; Game g(&p); g.begin(); grown(g, p, TEEN_END + 60, 37);
-      g.sv.yeetBest = 0; g.pet.d.fun = 30; g.pet.d.energy = 90;
+      g.sv.yeetBest = 0; g.pet.d.fun = 30; 
       tapIcon(g, p, IC_PLAY); run(g, p, 0.2f); tapDot(g, p, 10, 20); run(g, p, 0.2f);
       check(g.scr == S_YEET && g.yt_.phase == 0, "YEET from the Play menu: the card first");
       bool clear = true; for (int i = 0; i < 10; i++) if (g.yt_.ob[i].on && g.yt_.ob[i].x < MW) clear = false;
@@ -1832,11 +1728,12 @@ static int cmdNew() {
 namespace lf { struct NewShots { static int run_(const char* dir);
   static void run(Game& g, SimPlat& p, float sec) { ::run(g, p, sec); } }; }
 static int cmdNewShots(const char* dir) { return lf::NewShots::run_(dir); }
+#include "v010.inc"
 int lf::NewShots::run_(const char* dir) {
   outDir = dir;
   { // play menu, sick looks
     SimPlat p; Game g(&p); g.begin(); NewTests::grown(g, p, TEEN_END + 60, 37);
-    g.pet.d.energy = 90; tapIcon(g, p, IC_PLAY); run(g, p, 0.3f); shot(g, "play_menu");
+    tapIcon(g, p, IC_PLAY); run(g, p, 0.3f); shot(g, "play_menu");
     step(g, p, true, MX + 10 * DOT, MY + 20 * DOT); shot(g, "play_menu_press_yeet"); step(g, p); g.debugAct(-1); run(g, p, 0.3f);
     for (int f = F_BABY; f < F_COUNT; f++) {
       if (!NewTests::setLook(g, (Form)f)) continue;
@@ -1874,8 +1771,8 @@ int lf::NewShots::run_(const char* dir) {
   }
   { // poop up
     SimPlat p; Game g(&p); g.begin(); NewTests::grown(g, p, TEEN_END + 60, 37);
-    g.debugAct(13); run(g, p, 0.5f); shot(g, "poopup_card"); run(g, p, POOPUP_INTRO); run(g, p, 1.5f); shot(g, "poopup_play");
-    litterSolve(g, p, true); run(g, p, 0.4f); shot(g, "poopup_done"); run(g, p, 1.5f); shot(g, "poopup_score");
+    g.debugAct(13); run(g, p, 0.5f); shot(g, "pop_card"); run(g, p, POP_CARD_SECS); shot(g, "pop_play");
+    popPlay(g, p); run(g, p, 0.4f); shot(g, "pop_done"); run(g, p, 2.0f); shot(g, "pop_score");
   }
   { // yeet: a Lil Fella and a Lil Blob
     for (int who = 0; who < 3; who++) {
@@ -1898,6 +1795,11 @@ int lf::NewShots::run_(const char* dir) {
 
 int main(int argc, char** argv) {
   if (argc >= 3 && !strcmp(argv[1], "newshots")) return cmdNewShots(argv[2]);
+  if (argc >= 3 && !strcmp(argv[1], "babyeat")) return lf::V010::babyEat(argv[2]);
+  if (argc >= 3 && !strcmp(argv[1], "popshots")) return lf::V010::popShots(argv[2]);
+  if (argc >= 2 && !strcmp(argv[1], "v010")) return lf::V010::checks();
+  if (argc >= 2 && !strcmp(argv[1], "blub")) return lf::V010::blub();
+  if (argc >= 3 && !strcmp(argv[1], "wikishots")) return lf::V010::wikiShots(argv[2]);
   if (argc >= 2 && !strcmp(argv[1], "new")) return cmdNew();
   if (argc >= 3 && !strcmp(argv[1], "train")) return cmdTrain(argv[2]);
   if (argc >= 2 && !strcmp(argv[1], "lessons")) return cmdLessons();
@@ -1906,7 +1808,7 @@ int main(int argc, char** argv) {
   if (argc >= 2 && !strcmp(argv[1], "flows")) return cmdFlows();
   if (argc >= 2 && !strcmp(argv[1], "endings")) return cmdEndings();
   if (argc >= 2 && !strcmp(argv[1], "touch")) return cmdTouch();
-  if (argc >= 2 && !strcmp(argv[1], "litter")) return cmdLitter();
+  if (argc >= 2 && !strcmp(argv[1], "pop")) return lf::V010::pop();
   if (argc >= 2 && !strcmp(argv[1], "growth")) return cmdGrowth();
   if (argc >= 2 && !strcmp(argv[1], "eat")) return cmdEat();
   if (argc >= 2 && !strcmp(argv[1], "journal")) return JournalTest::all();

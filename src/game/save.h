@@ -46,6 +46,7 @@ struct SaveData {
 };
 constexpr uint8_t FIX_SICK = 1;   // v0.07: sickness reworked, bubbles gone
 constexpr uint8_t FIX_LOCK = 2;   // v0.08: training gone; its save byte (pad0[1]) is the LOCK now
+constexpr uint8_t FIX_AUTOOFF = 4;   // v1.0.1: Auto off no longer waits for the device to lie flat; the old default (5 Sec) becomes 30 Sec
 static_assert(offsetof(SaveData, mode) == 12 && offsetof(SaveData, clockSet) == 18 && offsetof(SaveData, unused0) == 24 &&
               offsetof(SaveData, hasBlob) == 33 && offsetof(SaveData, eq) == 56 && offsetof(SaveData, lastSeen) == 68 &&
               offsetof(SaveData, lifeFed) == 76 && offsetof(SaveData, hall) == 96 && offsetof(SaveData, pet) == 256 &&

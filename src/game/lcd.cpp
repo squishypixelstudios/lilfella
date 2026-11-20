@@ -184,9 +184,10 @@ int Matrix::smallWidth(const char* s, int spaceAdv) {
 
 void Matrix::render(Frame& f, uint8_t offShade, uint8_t bgShade) const {
   // every dot is a 3x3 block with a 1 px gap: written straight into the frame (the matrix is always fully on screen)
-  static_assert(DOT == 4 && MX >= 0 && MX + MW * DOT <= W && MY >= 0 && MY1 <= H, "the dot matrix must fit in the frame (and a dot is 3 lit + 1 gap)");
-  for (int y = 0; y < MH; y++) {
-    uint8_t* row = f.px + (MY + y * DOT) * W + MX;
+  static_assert(DOT == 4 && MX >= 0 && MX + MW * DOT <= W && MY >= 0 && MY1 <= H && MHX * DOT <= H, "the dot matrix must fit in the frame (and a dot is 3 lit + 1 gap)");
+  if (h < 1 || h > MHX || y0 < 0 || y0 + h * DOT > H) return;   // (a taller one, somewhere else: it must still fit)
+  for (int y = 0; y < h; y++) {
+    uint8_t* row = f.px + (y0 + y * DOT) * W + MX;
     const uint8_t* src = d + y * MW;
     for (int x = 0; x < MW; x++, row += DOT) {
       const uint8_t s = src[x] ? src[x] : offShade;
