@@ -9,6 +9,11 @@
 
 namespace lf {
 
+constexpr float PI_F = 3.14159265f;
+constexpr float TAU_F = 6.28318531f;
+inline int clampInt(int v, int a, int b) { return v < a ? a : (v > b ? b : v); }
+inline float clampFloat(float v, float a, float b) { return v < a ? a : (v > b ? b : v); }
+
 constexpr int W = 184;   // logical width  (physical 368 / 2)
 constexpr int H = 224;   // logical height (physical 448 / 2)
 
@@ -56,8 +61,7 @@ class Matrix {
   inline void set(int x, int y, uint8_t s) { if ((unsigned)x < (unsigned)MW && (unsigned)y < (unsigned)h) d[y * MW + x] = s; }
   inline uint8_t get(int x, int y) const { return ((unsigned)x < (unsigned)MW && (unsigned)y < (unsigned)h) ? d[y * MW + x] : 0; }
   void rect(int x, int y, int w, int h, uint8_t s);
-  // sprite in dots. mode: 0 normal, 1 eyes closed. fill: shade for the body inside (0 = none)
-  // mode: 0 awake, 1 eyes closed, 2 mouth open. fill: shade for the body inside the outline (0 = none).
+  // sprite in dots. mode: 0 awake, 1 eyes closed, 2 mouth open. fill: shade for the body inside the outline (0 = none).
   // sick: the body gets a sickly speckle (every other dot inside the outline, in `sick` shade; 0 = not sick)
   void sprite(int x, int y, int id, bool flip = false, int mode = 0, uint8_t fill = 0, uint8_t ink = SH_INK, uint8_t sick = 0);
   // 5x7 text in dots (6 dot advance)
@@ -66,6 +70,8 @@ class Matrix {
   // 3x5 text in dots (4 dot advance)
   void small(int x, int y, const char* s, uint8_t sh = SH_INK, int spaceAdv = 4);
   void smallCenter(int y, const char* s, uint8_t sh = SH_INK);
+  // a row of 4 hearts, the first n full (the games' result cards)
+  void hearts(int y, int n) { for (int i = 0; i < 4; i++) sprite(3 + i * 9, y, i < n ? SPR_HEART : SPR_HEART_E); }
   static int textWidth(const char* s) { int n = 0; while (s[n]) n++; return n ? n * 6 - 1 : 0; }
   static int smallWidth(const char* s, int spaceAdv = 4);
   // draw into the frame. offShade: shade of unlit dots; bgShade: the gaps between dots

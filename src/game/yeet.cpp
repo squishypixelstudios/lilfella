@@ -8,9 +8,6 @@
 namespace lf {
 
 static constexpr int FLOOR = MH - 1;
-static int clampi(int v, int a, int b) { return v < a ? a : (v > b ? b : v); }
-static float clampf_(float v, float a, float b) { return v < a ? a : (v > b ? b : v); }
-static void yHearts(Matrix& m, int y, int n) { for (int i = 0; i < 4; i++) m.sprite(3 + i * 9, y, i < n ? SPR_HEART : SPR_HEART_E); }
 
 // ---------------------------------------------------------------------------------------------
 // CLEAN: scrub it. A long litter box fills the screen, with any mess on the floor at its left. Rub a finger back and
@@ -43,7 +40,7 @@ void Game::startScrub() {
   S.floor = pet.d.floorMess > 4 ? 4 : pet.d.floorMess;
   if (!S.box && !S.floor) { sound(SND_PAGE); say("ALL CLEAN"); setScreen(S_MAIN); return; }
   const int n = S.box + S.floor;
-  S.base = 200.0f + 110.0f * (n - 1);   // the rubbing it takes when every poop is an easy one (dots, at most 4 a frame count): more poops, more rubbing
+  S.base = 200.0f + 110.0f * (n - 1);   // the rubbing it takes when every poop is an easy one (counted in dots of finger travel, at most 4 a frame): more poops, more rubbing
   // the poop that was the k-th in the box (or on the floor) last time, if there was one
   auto before = [&](int k, bool onFloor) -> decltype(&old.poo[0]) {
     if (!resume || k >= (onFloor ? old.floor : old.box)) return nullptr;
@@ -61,7 +58,7 @@ void Game::startScrub() {
     const int row = i / perRow, col = i % perRow, left = S.box - row * perRow, cols = left < perRow ? left : perRow, inset = row * 3;
     const int span = MW - 2 - (BOX_X0 + 2) - 2 * inset, slot = span / (cols ? cols : 1);
     const int cx = BOX_X0 + 2 + inset + slot * col + slot / 2 + (int)(pet.rnd() % 3) - 1;
-    p.x = (int8_t)clampi(cx - sh.w / 2, BOX_X0 + 1, MW - 1 - sh.w);
+    p.x = (int8_t)clampInt(cx - sh.w / 2, BOX_X0 + 1, MW - 1 - sh.w);
     p.y = (int8_t)(FLOOR - sh.h - row * 4 - (int)(pet.rnd() % 2));
     if (o && same) { p.x = o->x; p.y = o->y; }
   }
@@ -146,8 +143,8 @@ void Game::screenScrub() {
         }
         for (int j = 0; j < d && j < 3; j++) {
           auto& u = S.suds[S.ns++ % 48];
-          u.x = (int8_t)clampi(dx + (int)(pet.rnd() % 7) - 3, 0, MW - 3);
-          u.y = (int8_t)clampi(dy + (int)(pet.rnd() % 7) - 3, 0, MH - 3);
+          u.x = (int8_t)clampInt(dx + (int)(pet.rnd() % 7) - 3, 0, MW - 3);
+          u.y = (int8_t)clampInt(dy + (int)(pet.rnd() % 7) - 3, 0, MH - 3);
           u.k = (uint8_t)(pet.rnd() % 3);
           u.born = S.t;
         }
@@ -164,7 +161,7 @@ void Game::screenScrub() {
       // (poops done while this scrub was on screen aren't in it: they stay for the next one)
       pet.scoop(S.box);
       for (int i = 0; i < S.floor; i++) pet.cleanFloor();
-      if (pet.d.evolving) pet.train(ACC_CLEAN, 0.1f * n);
+      pet.train(ACC_CLEAN, 0.1f * n);
       sound(SND_SPARKLE);
     }
   } else {
@@ -203,7 +200,7 @@ void Game::screenScrub() {
 // (the Big Blorbus are heavy: they plough through birds and smash rocks); each look has its own way of flying.
 // ---------------------------------------------------------------------------------------------
 namespace {
-constexpr float GY = 27.0f;                 // the ground's surface (the bottom dot row is the ground)
+constexpr float GY = (float)FLOOR;          // the ground's surface (the bottom dot row is the ground)
 inline float seatX(int w) { return w * 0.5f + 9.5f; }   // where the fella sits in the sling (its middle): room behind to pull all the way back...
 // ...and how high: room below to pull all the way down, whatever their size
 inline float seatY(int h) { const float a = GY - 10.0f, b = GY - h * 0.5f - 9.5f; return a < b ? a : b; }
@@ -223,37 +220,38 @@ enum ObKind : uint8_t { OB_TRAMP, OB_ROCK, OB_BIRD, OB_CLOUD, OB_GUST, OB_MUD, O
 const uint8_t OB_WEIGHT[OB_KINDS] = {3, 4, 4, 3, 2, 3, 2, 3};
 // how each look flies, lands, and what it shouts when it goes
 enum Fly : uint8_t { FL_SPIN, FL_SPINB, FL_STRETCH, FL_FLAT, FL_FLIP, FL_WOBBLE, FL_STIFF, FL_ROLL, FL_FLAIL, FL_PUFF };
-enum Trail : uint8_t { TR_NONE, TR_GOO, TR_STAR, TR_CRUMB, TR_LEAF, TR_BUBBLE, TR_LINES, TR_HEART, TR_SPARK, TR_PUFF };
+// (TR_FEATHER is not a look's trail: it's the burst when a bird is hit)
+enum Trail : uint8_t { TR_NONE, TR_GOO, TR_STAR, TR_CRUMB, TR_LEAF, TR_BUBBLE, TR_LINES, TR_HEART, TR_SPARK, TR_PUFF, TR_FEATHER };
 enum Land : uint8_t { LD_SPLAT, LD_DIZZY, LD_FACE, LD_POSE, LD_PUDDLE, LD_SPINOUT, LD_HOP };
 struct Style { uint8_t fly, trail, land; const char* cry; };
-const Style STYLE[F_COUNT] = {
-  {FL_STRETCH, TR_GOO, LD_SPLAT, "WHEE!"},      // (the dropper: never plays)
-  {FL_STRETCH, TR_GOO, LD_SPLAT, "WHEE!"},      // Lil Blob: a teardrop of goo
-  {FL_SPIN, TR_STAR, LD_DIZZY, "WOO!"},         // Blobbert: round, so it spins
-  {FL_FLAT, TR_PUFF, LD_HOP, "MOCHI!"},         // Mochi: a frisbee
-  {FL_PUFF, TR_BUBBLE, LD_POSE, "PFFT!"},       // Cheeks: puffs up
-  {FL_FLIP, TR_CRUMB, LD_FACE, "BEAN!"},        // Bean: somersaults, face-plants
-  {FL_SPINB, TR_SPARK, LD_SPLAT, "BUN!"},       // Bun
-  {FL_ROLL, TR_LINES, LD_DIZZY, "CURL!"},       // Curly: rolls like a wheel
-  {FL_STIFF, TR_LINES, LD_POSE, "HUZZAH!"},     // Dapper: stiff as a board, then a bow
-  {FL_STIFF, TR_CRUMB, LD_HOP, "BREAD!"},       // Loaf
-  {FL_FLAT, TR_GOO, LD_PUDDLE, "SPLOOSH"},      // Puddle
-  {FL_WOBBLE, TR_BUBBLE, LD_HOP, "WIBBLE"},     // Jelly
-  {FL_FLAIL, TR_LEAF, LD_FACE, "SPROING"},      // Sprout: leaves everywhere
-  {FL_SPIN, TR_LINES, LD_SPINOUT, "SPIKE!"},    // SpikyBoi
-  {FL_PUFF, TR_PUFF, LD_SPLAT, "POOF!"},        // Puff
-  {FL_WOBBLE, TR_GOO, LD_PUDDLE, "SLOSH!"},     // Slosh
-  {FL_WOBBLE, TR_STAR, LD_DIZZY, "WOBBLE"},     // Wobbles
-  {FL_PUFF, TR_HEART, LD_HOP, "MALLOW"},        // Mallow
-  {FL_SPINB, TR_CRUMB, LD_FACE, "TOAST!"},      // Toasty
-  {FL_STRETCH, TR_HEART, LD_HOP, "MARSH!"},     // Marshy
-  {FL_FLAIL, TR_STAR, LD_POSE, "BOOP!"},        // Boop
-  {FL_FLAIL, TR_HEART, LD_DIZZY, "FUBZ!"},      // Fubz
-  {FL_STIFF, TR_PUFF, LD_SPINOUT, "ZOOM!"},     // Nimbus: a cloud with places to be
-  {FL_ROLL, TR_SPARK, LD_POSE, "ROLLIN"},       // Ballboi
-  {FL_WOBBLE, TR_LINES, LD_SPLAT, "BLORB!"},    // Big Blorbus Blobbert
-  {FL_ROLL, TR_STAR, LD_SPINOUT, "WHEEE"},      // Big Blorbus Ballboi
-  {FL_SPINB, TR_STAR, LD_POSE, "MEOW!"},        // Big Blorbus Alien Cat
+const Style STYLE[F_COUNT] = {   // one row per Form, in enum order (the comment names the Form, then the look)
+  {FL_STRETCH, TR_GOO, LD_SPLAT, "WHEE!"},      // F_DROPPER: (the dropper: never plays)
+  {FL_STRETCH, TR_GOO, LD_SPLAT, "WHEE!"},      // F_BABY: Lil Blob: a teardrop of goo
+  {FL_SPIN, TR_STAR, LD_DIZZY, "WOO!"},         // F_S0: Blobbert: round, so it spins
+  {FL_FLAT, TR_PUFF, LD_HOP, "MOCHI!"},         // F_S0B: Mochi: a frisbee
+  {FL_PUFF, TR_BUBBLE, LD_POSE, "PFFT!"},       // F_S0C: Cheeks: puffs up
+  {FL_FLIP, TR_CRUMB, LD_FACE, "BEAN!"},        // F_TN_BEAN: Bean: somersaults, face-plants
+  {FL_SPINB, TR_SPARK, LD_SPLAT, "BUN!"},       // F_TN_BUN: Bun
+  {FL_ROLL, TR_LINES, LD_DIZZY, "CURL!"},       // F_TN_CURL: Curly: rolls like a wheel
+  {FL_STIFF, TR_LINES, LD_POSE, "HUZZAH!"},     // F_S1C: Dapper: stiff as a board, then a bow
+  {FL_STIFF, TR_CRUMB, LD_HOP, "BREAD!"},       // F_AD_LOAF: Loaf
+  {FL_FLAT, TR_GOO, LD_PUDDLE, "SPLOOSH"},      // F_AD_PUDDLE: Puddle
+  {FL_WOBBLE, TR_BUBBLE, LD_HOP, "WIBBLE"},     // F_AD_JELLY: Jelly
+  {FL_FLAIL, TR_LEAF, LD_FACE, "SPROING"},      // F_TN_SPROUT: Sprout: leaves everywhere
+  {FL_SPIN, TR_LINES, LD_SPINOUT, "SPIKE!"},    // F_AD_DANGO: SpikyBoi
+  {FL_PUFF, TR_PUFF, LD_SPLAT, "POOF!"},        // F_AD_PUFF: Puff
+  {FL_WOBBLE, TR_GOO, LD_PUDDLE, "SLOSH!"},     // F_TN_SLOSH: Slosh
+  {FL_WOBBLE, TR_STAR, LD_DIZZY, "WOBBLE"},     // F_TN_WOBBLES: Wobbles
+  {FL_PUFF, TR_HEART, LD_HOP, "MALLOW"},        // F_TN_MALLOW: Mallow
+  {FL_SPINB, TR_CRUMB, LD_FACE, "TOAST!"},      // F_TN_TOASTY: Toasty
+  {FL_STRETCH, TR_HEART, LD_HOP, "MARSH!"},     // F_AD_MARSHY: Marshy
+  {FL_FLAIL, TR_STAR, LD_POSE, "BOOP!"},        // F_AD_BOOP: Boop
+  {FL_FLAIL, TR_HEART, LD_DIZZY, "FUBZ!"},      // F_AD_FUBZ: Fubz
+  {FL_STIFF, TR_PUFF, LD_SPINOUT, "ZOOM!"},     // F_AD_NIMBUS: Nimbus: a cloud with places to be
+  {FL_ROLL, TR_SPARK, LD_POSE, "ROLLIN"},       // F_AD_BALLBOI: Ballboi
+  {FL_WOBBLE, TR_LINES, LD_SPLAT, "BLORB!"},    // F_BB_BLOBBERT: Big Blorbus Blobbert
+  {FL_ROLL, TR_STAR, LD_SPINOUT, "WHEEE"},      // F_BB_BALLBOI: Big Blorbus Ballboi
+  {FL_SPINB, TR_STAR, LD_POSE, "MEOW!"},        // F_BB_ALIEN: Big Blorbus Alien Cat
 };
 int obW(uint8_t k) { return k == OB_GUST ? 14 : k == OB_MUD ? 8 : k == OB_CLOUD ? 8 : k == OB_TRAMP ? 7 : k == OB_ROCK ? 6 : 5; }
 int obH(uint8_t k) { return k == OB_GUST ? 7 : k == OB_MUD ? 2 : k == OB_CLOUD ? 4 : k == OB_TRAMP ? 3 : k == OB_ROCK ? 4 : k == OB_BIRD ? 3 : k == OB_SPRING ? 6 : 5; }
@@ -290,7 +288,7 @@ void Game::yeetLaunch(float pullX, float pullY) {
   if (sy + pullY + spriteH(id) * 0.5f > GY) pullY = GY - spriteH(id) * 0.5f - sy;   // (not down through the ground)
   Y.x = seatX(spriteW(id)) + pullX; Y.y = sy + pullY;
   Y.vx = -pullX * P.k; Y.vy = -pullY * P.k;
-  Y.phase = 2; Y.t = 0; Y.aiming = false; Y.maxX = Y.x; Y.splatDone = false;
+  Y.phase = 2; Y.t = 0; Y.aiming = false; Y.splatDone = false;
   sound(SND_WHOOSH);
 }
 
@@ -349,7 +347,7 @@ void Game::yeetStep(float dtReal) {
   // more things out past the edge of the screen
   while (Y.nextOb < Y.camX + 90.0f) {
     int slot = -1;
-    for (int i = 0; i < 10; i++) if (!Y.ob[i].on) { slot = i; break; }
+    for (int i = 0; i < YEET_OBS; i++) if (!Y.ob[i].on) { slot = i; break; }
     if (slot < 0) break;
     int total = 0; for (int k = 0; k < OB_KINDS; k++) total += OB_WEIGHT[k];
     int r = (int)(pet.rnd() % (uint32_t)total), kind = 0;
@@ -378,7 +376,7 @@ void Game::yeetStep(float dtReal) {
     if (Y.x - hx < 0) { Y.x = hx; Y.vx = fabsf(Y.vx) * 0.5f; }
     Y.onGround = false; Y.inMud = false;
     // things out there
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < YEET_OBS; i++) {
       YeetOb& o = Y.ob[i];
       if (!o.on) continue;
       if (o.kind == OB_BIRD) { o.x -= 5.0f * h; o.t += h; }
@@ -412,7 +410,7 @@ void Game::yeetStep(float dtReal) {
             if (P.heavy) Y.vx *= 0.9f;
             else { Y.vx *= 0.55f; Y.vy = (Y.vy > 0 ? Y.vy : 0) + 18.0f; }
             sound(SND_LOSE);
-            for (int k = 0; k < 16; k++) if (Y.pt[k].life <= 0) { Y.pt[k] = {o.x + 2, o.y + 1, pet.rndRange(-8, 8), pet.rndRange(-10, 2), 0.7f, 9}; }
+            for (int k = 0; k < YEET_PARTS; k++) if (Y.pt[k].life <= 0) { Y.pt[k] = {o.x + 2, o.y + 1, pet.rndRange(-8, 8), pet.rndRange(-10, 2), 0.7f, TR_FEATHER}; }
           }
           break;
         case OB_CLOUD:
@@ -456,28 +454,27 @@ void Game::yeetStep(float dtReal) {
       const float dec = P.fric * (Y.inMud ? 9.0f : 1.0f) * h;
       if (fabsf(Y.vx) <= dec) Y.vx = 0; else Y.vx -= Y.vx > 0 ? dec : -dec;
     }
-    if (Y.x > Y.maxX) Y.maxX = Y.x;
   }
   // spinning: how fast depends on how fast they're going (rolling looks turn with the ground)
   const Style& st = STYLE[form() < F_COUNT ? form() : 0];
   const float speed = sqrtf(Y.vx * Y.vx + Y.vy * Y.vy);
-  if (st.fly == FL_ROLL) Y.spin += Y.vx * dtReal / (sw * 0.8f) * 4.0f / 3.14159f;
+  if (st.fly == FL_ROLL) Y.spin += Y.vx * dtReal / (sw * 0.8f) * 4.0f / PI_F;
   else if (st.fly == FL_SPIN || st.fly == FL_SPINB) { if (!Y.onGround || fabsf(Y.vx) > 5) Y.spin += dtReal * speed * 0.12f; }
   // a trail behind them
   if (st.trail != TR_NONE && !Y.onGround && speed > 8.0f && ((int)(Y.t * 12) != (int)((Y.t - dtReal) * 12))) {
-    for (int k = 0; k < 16; k++) if (Y.pt[k].life <= 0) {
+    for (int k = 0; k < YEET_PARTS; k++) if (Y.pt[k].life <= 0) {
       Y.pt[k] = {Y.x - (Y.vx > 0 ? sw * 0.5f : -sw * 0.5f), Y.y + pet.rndRange(-2, 2), -Y.vx * 0.1f, st.trail == TR_GOO ? 6.0f : st.trail == TR_LEAF ? 3.0f : -1.0f, 0.6f, st.trail};
       break;
     }
   }
-  for (int k = 0; k < 16; k++) if (Y.pt[k].life > 0) { auto& q = Y.pt[k]; q.life -= dtReal; q.x += q.vx * dtReal; q.y += q.vy * dtReal; if (q.k == TR_GOO || q.k == 9) q.vy += 30.0f * dtReal; }
+  for (int k = 0; k < YEET_PARTS; k++) if (Y.pt[k].life > 0) { auto& q = Y.pt[k]; q.life -= dtReal; q.x += q.vx * dtReal; q.y += q.vy * dtReal; if (q.k == TR_GOO || q.k == TR_FEATHER) q.vy += 30.0f * dtReal; }
   // the camera follows (up too, when they go high)
   const float tx = Y.x - 13.0f > 0 ? Y.x - 13.0f : 0;
-  Y.camX += (tx - Y.camX) * clampf_(dtReal * 7.0f, 0, 1);
+  Y.camX += (tx - Y.camX) * clampFloat(dtReal * 7.0f, 0, 1);
   const bool odd = (Y.rot & 1) != 0;
   const float top = Y.y - (odd ? sw : sh) * 0.5f;
   const float ty = top < 3.0f ? top - 3.0f : 0.0f;
-  Y.camY += (ty - Y.camY) * clampf_(dtReal * 7.0f, 0, 1);
+  Y.camY += (ty - Y.camY) * clampFloat(dtReal * 7.0f, 0, 1);
   // ...but never so far up that their feet leave the bottom of the screen: coming down fast, the camera used to
   // lag behind and the ground (and their bottom rows) were still off the screen when they landed
   {
@@ -495,9 +492,9 @@ void Game::yeetStep(float dtReal) {
     const int m = Y.meters;
     Y.hearts = m >= 150 ? 4 : m >= 100 ? 3 : m >= 60 ? 2 : m >= 30 ? 1 : 0;
     pet.exercise(4.0f + 5.0f * Y.hearts, 0.3f + 0.2f * Y.hearts);
-    if (pet.d.evolving) pet.train(ACC_STRENGTH, 0.1f * Y.hearts);
+    pet.train(ACC_STRENGTH, 0.1f * Y.hearts);
     sv.lifeGames++;
-    if (m > sv.yeetBest) { Y.best = sv.yeetBest > 0 || m > 0; sv.yeetBest = (uint16_t)(m > 65535 ? 65535 : m); }
+    if (m > sv.yeetBest) { Y.best = true; sv.yeetBest = (uint16_t)(m > 65535 ? 65535 : m); }
   }
 }
 
@@ -547,7 +544,7 @@ void Game::screenYeet() {
   if (Y.phase == 4) {   // the result, on a clear screen
     snprintf(b, sizeof b, "%dM", Y.meters);
     m_.textCenter(2, b);
-    yHearts(m_, 11, Y.hearts);
+    m_.hearts(11, Y.hearts);
     if (Y.best) m_.smallCenter(21, ((int)(anim_ * 3) & 1) ? "NEW BEST!" : "", SH_INK);
     else { snprintf(b, sizeof b, "BEST %uM", (unsigned)sv.yeetBest); m_.smallCenter(21, b, SH_MID); }
     if (Y.landT > 0.6f && in.tap) setScreen(S_MAIN);
@@ -574,7 +571,7 @@ void Game::screenYeet() {
   m_.sprite(slx, sly, SPR_Y_SLING);
   for (int y = sly + spriteH(SPR_Y_SLING); y < gy; y++) m_.set(slx + 2, y, SH_INK);   // (a taller post for a bigger fella)
   // things
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < YEET_OBS; i++) {
     const YeetOb& o = Y.ob[i];
     if (!o.on) continue;
     const int x = SXo(o.x), y = SYo(o.y);
@@ -597,7 +594,7 @@ void Game::screenYeet() {
     }
   }
   // particles (the trail; feathers)
-  for (int k = 0; k < 16; k++) {
+  for (int k = 0; k < YEET_PARTS; k++) {
     const auto& q = Y.pt[k];
     if (q.life <= 0) continue;
     const int x = SXo(q.x), y = SYo(q.y);
@@ -609,7 +606,8 @@ void Game::screenYeet() {
       case TR_HEART: m_.set(x - 1, y, SH_INK); m_.set(x + 1, y, SH_INK); m_.set(x, y + 1, SH_INK); break;
       case TR_PUFF: m_.rect(x, y, 2, 2, SH_MID); break;
       case TR_GOO: m_.set(x, y, SH_MID); break;
-      default: m_.set(x, y, SH_INK); break;   // crumbs, feathers
+      case TR_FEATHER: m_.set(x, y, SH_INK); break;   // (the look the feathers always had)
+      default: m_.set(x, y, SH_INK); break;   // crumbs
     }
   }
   // the fella
@@ -627,7 +625,7 @@ void Game::screenYeet() {
       case FL_SPIN: rot = (int)floorf(Y.spin) & 3; break;
       case FL_SPINB: rot = (-(int)floorf(Y.spin)) & 3; break;
       case FL_ROLL: rot = (int)floorf(Y.spin) & 3; break;
-      case FL_STRETCH: if (air) { sxs = 1.0f + clampf_(sp / 110.0f, 0, sw < 10 ? 0.3f : 0.5f); sys = 1.0f / sxs; } break;   // (a tiny one stretches less: it would lose its face)
+      case FL_STRETCH: if (air) { sxs = 1.0f + clampFloat(sp / 110.0f, 0, sw < 10 ? 0.3f : 0.5f); sys = 1.0f / sxs; } break;   // (a tiny one stretches less: it would lose its face)
       case FL_FLAT: if (air) { sxs = 1.3f; sys = 0.65f + 0.1f * sinf(Y.t * 20.0f); } break;
       case FL_FLIP: if (air) rot = ((int)(Y.t * 4) & 1) * 2; break;
       case FL_WOBBLE: { const float k = 0.2f * sinf(Y.t * 14.0f); sxs = 1 + k; sys = 1 - k; break; }
@@ -641,17 +639,17 @@ void Game::screenYeet() {
   } else if (Y.phase == 3) {   // landed: their own landing
     const float t = Y.landT;
     switch (st.land) {
-      case LD_SPLAT: { const float k = clampf_(1 - t / 0.8f, 0, 1); sxs = 1 + 0.5f * k; sys = 1 - 0.5f * k; mode = t < 0.8f; break; }
+      case LD_SPLAT: { const float k = clampFloat(1 - t / 0.8f, 0, 1); sxs = 1 + 0.5f * k; sys = 1 - 0.5f * k; mode = t < 0.8f; break; }
       case LD_DIZZY: {   // stars round the head
         const float a = t * 7.0f;
-        for (int k = 0; k < 2; k++) m_.set(SXo(fx + cosf(a + k * 3.14f) * sw * 0.45f), SYo(fy - sh * 0.5f - 2 + sinf(a + k * 3.14f) * 1.2f), SH_INK);
+        for (int k = 0; k < 2; k++) m_.set(SXo(fx + cosf(a + k * PI_F) * sw * 0.45f), SYo(fy - sh * 0.5f - 2 + sinf(a + k * PI_F) * 1.2f), SH_INK);
         mode = 1; break;
       }
-      case LD_FACE: if (t < 1.2f) { rot = 2; fy += 0; fx += ((int)(t * 12) & 1) ? 0.5f : -0.5f; } break;
-      case LD_POSE: bob = -fabsf(sinf(t * 6.0f)) * 2.0f * clampf_(1 - t / 1.2f, 0, 1); if ((int)(t * 5) & 1) m_.sprite(SXo(fx + sw * 0.5f), SYo(fy - sh * 0.5f - 2), SPR_SPARK); break;
-      case LD_PUDDLE: { const float k = t < 0.6f ? t / 0.6f : t < 1.2f ? 1 : clampf_(1 - (t - 1.2f) / 0.5f, 0, 1); sxs = 1 + 0.5f * k; sys = 1 - 0.65f * k; break; }
-      case LD_SPINOUT: { const float a = t < 1.2f ? (1.2f * t - 0.5f * t * t) * 6.0f : 6.0f * 0.72f; rot = (int)a & 3; if (t > 1.2f) rot = 0; break; }
-      case LD_HOP: bob = -fabsf(sinf(t * 9.0f)) * 2.5f * clampf_(1 - t / 1.5f, 0, 1); break;
+      case LD_FACE: if (t < 1.2f) { rot = 2; fx += ((int)(t * 12) & 1) ? 0.5f : -0.5f; } break;
+      case LD_POSE: bob = -fabsf(sinf(t * 6.0f)) * 2.0f * clampFloat(1 - t / 1.2f, 0, 1); if ((int)(t * 5) & 1) m_.sprite(SXo(fx + sw * 0.5f), SYo(fy - sh * 0.5f - 2), SPR_SPARK); break;
+      case LD_PUDDLE: { const float k = t < 0.6f ? t / 0.6f : t < 1.2f ? 1 : clampFloat(1 - (t - 1.2f) / 0.5f, 0, 1); sxs = 1 + 0.5f * k; sys = 1 - 0.65f * k; break; }
+      case LD_SPINOUT: { rot = t < 1.2f ? (int)((1.2f * t - 0.5f * t * t) * 6.0f) & 3 : 0; break; }   // (a spin that slows, then stops upright)
+      case LD_HOP: bob = -fabsf(sinf(t * 9.0f)) * 2.5f * clampFloat(1 - t / 1.5f, 0, 1); break;
       default: break;
     }
   }

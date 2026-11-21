@@ -1413,39 +1413,6 @@ static const uint8_t px_IC_UNLOCK[] = {
   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // ................
   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // ................
 };
-// training: feather wand (feather on top, stick down to the hand)
-static const uint8_t px_WAND[] = {
-  0,0,1,1,0,0,0,  // ..XX...
-  0,1,1,1,1,0,0,  // .XXXX..
-  0,0,1,1,0,0,0,  // ..XX...
-  0,0,0,1,0,0,0,  // ...X...
-  0,0,0,0,1,0,0,  // ....X..
-  0,0,0,0,0,1,0,  // .....X.
-  0,0,0,0,0,0,1,  // ......X
-};
-// mischief: a knocked-over cup, spilling
-static const uint8_t px_CUP_TIP[] = {
-  1,1,1,1,0,0,0,  // XXXX...
-  1,0,0,0,1,0,0,  // X...X..
-  1,1,1,1,0,0,0,  // XXXX...
-  0,0,0,0,0,1,0,  // .....X.
-  0,0,0,0,0,0,1,  // ......X
-};
-// mischief: scratch marks
-static const uint8_t px_SCRATCH[] = {
-  1,0,1,0,  // X.X.
-  0,1,0,1,  // .X.X
-  1,0,1,0,  // X.X.
-  0,1,0,1,  // .X.X
-  1,0,1,0,  // X.X.
-};
-// training: the clicker
-static const uint8_t px_CLICK[] = {
-  0,1,1,1,0,  // .XXX.
-  1,0,1,0,1,  // X.X.X
-  1,0,0,0,1,  // X...X
-  0,1,1,1,0,  // .XXX.
-};
 // attention: a round blob (no ears) and a !
 static const uint8_t px_IC_CALL[] = {
   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // ................
@@ -1587,10 +1554,6 @@ const Sprite SPRITES[SPR_COUNT] = {
   {16, 16, px_IC_METER},
   {16, 16, px_IC_LOCK},
   {16, 16, px_IC_UNLOCK},
-  {7, 7, px_WAND},
-  {7, 5, px_CUP_TIP},
-  {4, 5, px_SCRATCH},
-  {5, 4, px_CLICK},
   {16, 16, px_IC_CALL},
 };
 

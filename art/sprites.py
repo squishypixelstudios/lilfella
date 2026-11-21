@@ -1161,35 +1161,6 @@ spr('IC_UNLOCK', '''
 ................
 ................
 ''', 'LOCK, unlocked: an open padlock')
-spr('WAND', '''
-..XX...
-.XXXX..
-..XX...
-...X...
-....X..
-.....X.
-......X
-''', 'training: feather wand (feather on top, stick down to the hand)')
-spr('CUP_TIP', '''
-XXXX...
-X...X..
-XXXX...
-.....X.
-......X
-''', 'mischief: a knocked-over cup, spilling')
-spr('SCRATCH', '''
-X.X.
-.X.X
-X.X.
-.X.X
-X.X.
-''', 'mischief: scratch marks')
-spr('CLICK', '''
-.XXX.
-X.X.X
-X...X
-.XXX.
-''', 'training: the clicker')
 spr('IC_CALL', '''
 ................
 .....XXXX.....X.

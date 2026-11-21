@@ -52,9 +52,7 @@ static void audioTask(void*) {
       if (m.snd < lf::SND_COUNT) {
         int pick = 0;
         for (int i = 0; i < VOICES; i++) { if (voice[i].v.done()) { pick = i; break; } if (voice[i].born < voice[pick].born) pick = i; }
-        // settings 0..5: every step is half of what it was up to v0.09 (0.05, 0.11, 0.22, 0.45, 0.85), which was too
-        // loud all the way up. Speaker power goes with the square of this, so each setting draws about a quarter of
-        // what it did.
+        // volume settings 0..5. Speaker power goes with the square of the gain, so each step is a gentle rise.
         static const float g[6] = {0.0f, 0.025f, 0.055f, 0.11f, 0.225f, 0.425f};
         voice[pick].gain = g[m.vol > 5 ? 5 : m.vol];
         voice[pick].born = ++serial;
@@ -91,7 +89,7 @@ void audioBegin() {
     Serial.println("[audio] i2s begin failed");
     return;
   }
-  es8311_handle_t h = es8311_create(0, ES8311_ADDRRES_0);
+  es8311_handle_t h = es8311_create(0, ES8311_ADDRESS_0);
   if (!h) { Serial.println("[audio] es8311 create failed"); return; }
   const es8311_clock_config_t clk = {
     .mclk_inverted = false,
@@ -100,7 +98,6 @@ void audioBegin() {
     .mclk_frequency = SR * 256,
     .sample_frequency = SR};
   if (es8311_init(h, &clk, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16) != ESP_OK ||
-      es8311_sample_frequency_config(h, clk.mclk_frequency, clk.sample_frequency) != ESP_OK ||
       es8311_voice_volume_set(h, 85, NULL) != ESP_OK) {
     Serial.println("[audio] es8311 config failed");
     return;

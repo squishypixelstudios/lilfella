@@ -53,10 +53,10 @@ void Game::pageClock(Frame& f) {
       else if (in.py >= fl.y + fl.h / 2 && in.py < fl.y + fl.h + 22) { holdFld = k; holdDir = -1; }
     }
   }
-  bool step = false;
+  bool step = false, landed = false;
   if (holdFld < 0) { clockHoldFld_ = -1; clockHoldDir_ = 0; clockHoldT_ = 0; }
   else if (holdFld != clockHoldFld_ || holdDir != clockHoldDir_) {   // finger just landed (or slid to another arrow)
-    clockHoldFld_ = holdFld; clockHoldDir_ = holdDir; clockHoldT_ = 0; step = true;
+    clockHoldFld_ = holdFld; clockHoldDir_ = holdDir; clockHoldT_ = 0; step = true; landed = true;
   } else {
     const float before = clockHoldT_;
     clockHoldT_ += dt;
@@ -71,7 +71,7 @@ void Game::pageClock(Frame& f) {
     const int hi = fl.i == 2 ? daysInMonth(c[0], c[1]) : fl.hi;
     if (clockHoldDir_ > 0) c[fl.i] = c[fl.i] >= hi ? fl.lo : c[fl.i] + 1;
     else c[fl.i] = c[fl.i] <= fl.lo ? hi : c[fl.i] - 1;
-    if (clockHoldT_ < 0.5f) sound(SND_KEY);   // click on the first press only; the repeats stay quiet
+    if (landed) sound(SND_KEY);   // click on the first press only (the finger landing); the repeats stay quiet
   }
   for (const Fld& fl : flds) {
     const char up[2] = {30, 0}, dn[2] = {31, 0};
@@ -110,8 +110,11 @@ static float bounceOut(float u) {
   if (u < 2.5f / d) { u -= 2.25f / d; return n * u * u + 0.9375f; }
   u -= 2.625f / d; return n * u * u + 0.984375f;
 }
-// a sprite stretched to sx by sy, centred on cx and standing on by (the hop's squash and stretch)
+// a sprite stretched to sx by sy, centred on cx and standing on by (the hop's squash and stretch).
+// flip = it walks to the right. Most of them are drawn looking left (or straight at you); Jelly is drawn looking
+// right, so it is turned the other way round to keep its face pointing where it is going.
 static void titleSprite(Frame& f, int id, float cx, float by, float sx, float sy, uint8_t ink, bool flip) {
+  if (id == SPR_AD_JELLY) flip = !flip;
   const Sprite& sp = SPRITES[id];
   const int dw = (int)lroundf(sp.w * sx), dh = (int)lroundf(sp.h * sy);
   if (dw < 1 || dh < 1) return;
@@ -130,14 +133,14 @@ static void titleSprite(Frame& f, int id, float cx, float by, float sx, float sy
 void Game::pageTitle(Frame& f) {
   static const uint8_t fellas[10] = {SPR_AD_LOAF, SPR_AD_PUDDLE, SPR_AD_JELLY, SPR_AD_DANGO, SPR_AD_PUFF,
                                      SPR_AD_MARSHY, SPR_AD_BOOP, SPR_AD_FUBZ, SPR_AD_NIMBUS, SPR_AD_BALLBOI};
-  constexpr float BEAT = 0.625f, BAR = 2.5f, PI_ = 3.14159265f;
+  constexpr float BEAT = 0.625f, BAR = 2.5f;
   const float t = scrT_;
   // the tune: one bar at a time, so it stops within a bar when the page is left
   const int bar = (int)(t / BAR);
   if (bar != titleBar_) { titleBar_ = bar; sound((Sound)(SND_TITLE1 + bar % 8)); }
   // bubbles drifting up
   for (int i = 0; i < 7; i++) {
-    const float y = 240 - wrapf(i * 37 + t * ((i & 1) ? 26 : 13), 260), x = 14 + i * 26 + 6 * sinf(2 * PI_ * t / 5 + i);
+    const float y = 240 - wrapf(i * 37 + t * ((i & 1) ? 26 : 13), 260), x = 14 + i * 26 + 6 * sinf(2 * PI_F * t / 5 + i);
     f.ring((int)lroundf(x), (int)lroundf(y), 3 + i % 3, SH_FAINT);
   }
   // the title
@@ -148,7 +151,7 @@ void Game::pageTitle(Frame& f) {
     for (int c = 0; c < n; c++, k++) {
       const float u = (t - 0.2f - k * 0.18f) / 0.7f;
       if (u <= 0) continue;
-      const float y = u < 1 ? -50 + (lineY[l] + 50) * bounceOut(u) : lineY[l] + 3 * sinf(2 * PI_ * t / (BEAT * 2) - k * 0.7f);
+      const float y = u < 1 ? -50 + (lineY[l] + 50) * bounceOut(u) : lineY[l] + 3 * sinf(2 * PI_F * t / (BEAT * 2) - k * 0.7f);
       const char ch[2] = {lines[l][c], 0};
       f.text(W / 2 - (n * 30 - 5) / 2 + c * 30, (int)lroundf(y), ch, SH_INK, 5);
     }
@@ -165,7 +168,7 @@ void Game::pageTitle(Frame& f) {
   for (int i = 0; i < 10; i++) {
     const float x = wrapf(i * 46 - t * 23, 460) - 40, p = wrapf(t / BEAT + i * 0.5f, 1);
     if (x > W + 30) continue;
-    const float sq = p < 0.18f ? 1 - p / 0.18f : p > 0.9f ? (p - 0.9f) / 0.1f * 0.5f : -0.4f * sinf(PI_ * (p - 0.18f) / 0.72f);
+    const float sq = p < 0.18f ? 1 - p / 0.18f : p > 0.9f ? (p - 0.9f) / 0.1f * 0.5f : -0.4f * sinf(PI_F * (p - 0.18f) / 0.72f);
     titleSprite(f, fellas[i], x, 196 - 56 * p * (1 - p), 2 * (1 + 0.14f * sq), 2 * (1 - 0.14f * sq), SH_INK, false);
   }
   if (t > 2.5f && wrapf(t, BEAT * 2) < BEAT * 1.5f) f.textCenter(W / 2, 211, "TAP TO START", SH_MID);
@@ -226,17 +229,18 @@ void Game::leaveSettings() {
 
 void Game::pageSettings(Frame& f) {
   // (Speed is a developer option: remove it, and A_SPEED, before the final version.)
+  // (So is the Big jump: remove it, A_BIGJUMP and Game::debugJumpBig too.)
   // three short pages with tall rows, so each one is easy to hit with a finger; the two that wipe things are on their own page
-  enum Act { A_SOUND, A_BRIGHT, A_SCREEN, A_AUTOOFF, A_MORE, A_FRIENDS, A_JOURNAL, A_CLOCK, A_TOUCH, A_SPEED, A_NEWBLOB, A_ERASE, A_ABOUT, A_BACK };
+  enum Act { A_SOUND, A_BRIGHT, A_SCREEN, A_AUTOOFF, A_MORE, A_FRIENDS, A_JOURNAL, A_CLOCK, A_TOUCH, A_SPEED, A_BIGJUMP, A_NEWBLOB, A_ERASE, A_ABOUT, A_BACK };
   static const Act page1[] = {A_SOUND, A_BRIGHT, A_SCREEN, A_AUTOOFF, A_MORE, A_BACK};
   static const Act page2[] = {A_FRIENDS, A_JOURNAL, A_CLOCK, A_SPEED, A_MORE, A_BACK};
-  static const Act page3[] = {A_NEWBLOB, A_ERASE, A_TOUCH, A_ABOUT, A_BACK};   // (Touch, the debug overlay, lives here; About is the last row)
+  static const Act page3[] = {A_NEWBLOB, A_ERASE, A_TOUCH, A_BIGJUMP, A_ABOUT, A_BACK};   // (Touch, the debug overlay, and the Big jump live here; About is the last row)
   static const char* const vol[6] = {"0 OFF", "1", "2", "3", "4", "5 MAX"};
   static const int speeds[3] = {1, 1000, 3000};
   if (setPage_ < 0 || setPage_ > 2) setPage_ = 0;
   const bool second = setPage_ > 0;
   const Act* acts = setPage_ == 2 ? page3 : setPage_ == 1 ? page2 : page1;
-  const int n = setPage_ == 2 ? 5 : 6;
+  const int n = 6;
   char title[20]; snprintf(title, sizeof title, "SETTINGS %d/3", setPage_ + 1);
   f.textCenter(W / 2, 8, title, SH_INK);
   char ver[16]; snprintf(ver, sizeof ver, "v%s", LF_VERSION);
@@ -256,6 +260,7 @@ void Game::pageSettings(Frame& f) {
       case A_CLOCK: lab = "Clock"; snprintf(val, sizeof val, "%02d:%02d", hour, minute); break;
       case A_TOUCH: lab = "Touch"; snprintf(val, sizeof val, "%s", showTouch ? "DEBUG" : "OFF"); break;
       case A_SPEED: lab = "Speed"; snprintf(val, sizeof val, "x%d", timeScale); break;
+      case A_BIGJUMP: { const Form fm = form(); lab = "Big look"; snprintf(val, sizeof val, "%s", fm == F_BB_BLOBBERT ? "BLOB" : fm == F_BB_BALLBOI ? "BALL" : fm == F_BB_ALIEN ? "CAT" : "-"); break; }
       case A_NEWBLOB: lab = "New blob"; break;
       case A_ERASE: lab = "Erase everything"; break;
       case A_ABOUT: lab = "About"; break;
@@ -286,6 +291,7 @@ void Game::pageSettings(Frame& f) {
       }
       case A_TOUCH: showTouch = !showTouch; sv.eq[1] = showTouch ? 1 : 0; break;
       case A_SPEED: { int k = 0; for (int j = 0; j < 3; j++) if (speeds[j] == timeScale) k = j; timeScale = speeds[(k + 1) % 3]; break; }
+      case A_BIGJUMP: debugJumpBig(); break;   // (stays here: tap again for the next look, Back to see it)
       case A_NEWBLOB: confirm_ = CF_NEWBLOB; setScreen(S_CONFIRM); return;
       case A_ERASE: confirm_ = CF_ERASE; setScreen(S_CONFIRM); return;
       case A_ABOUT: setScreen(S_ABOUT); return;
@@ -441,7 +447,7 @@ void Game::pageConfirm(Frame& f) {
   if (erase) {
     f.textCenter(W / 2, 40, "Erase everything?", SH_INK);
     f.textCenter(W / 2, 58, "Your fella, old friends,", SH_MID);
-    f.textCenter(W / 2, 70, "bubbles and settings", SH_MID);
+    f.textCenter(W / 2, 70, "journal and settings", SH_MID);
     f.textCenter(W / 2, 82, "are all wiped.", SH_MID);
   } else {
     f.textCenter(W / 2, 50, "Start a new blob?", SH_INK);

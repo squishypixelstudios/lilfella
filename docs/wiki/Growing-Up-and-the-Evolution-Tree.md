@@ -51,7 +51,7 @@ From 8 days old, some looks are offered a Big Blorbus form. You can also turn it
 
 - **Jelly** or **Puff** from the Blobbert line: **Big Blob** (Big Blobbert).
 - **Ballboi** from the Cheeks line: **Big Ball** (Big Ballboi).
-- **Nimbus** or **Loaf**: **Alien Cat in a Tuxedo**.
+- **Nimbus** or **Dapper**: **Alien Cat in a Tuxedo**.
 
 Big Blorbus never gets hungry. Its Feed icon is the ORBIT CATCH game (see [Mini-Games](Mini-Games.md)).
 

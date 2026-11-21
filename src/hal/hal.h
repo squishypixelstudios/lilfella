@@ -6,7 +6,7 @@ namespace hal {
 
 void begin();                                   // bring up every peripheral
 bool readTouch(int& x, int& y);                 // px inside the game's 368x448 picture (0..367 x 0..447); false = finger up
-void flush(const uint8_t* frame184x224, const uint16_t* palette4);   // 2-bit shades -> RGB565, 2x upscale, centred on the AMOLED
+void flush(const uint8_t* frame184x224, const uint16_t* palette4);   // 2-bit shades -> RGB565, scaled and placed per board.h
 void setBrightness(uint8_t level);              // 0..255, only sends on change
 
 // audio (runs on its own task; the codec shares the I2C port). platformio.ini builds with -DLF_AUDIO=1.

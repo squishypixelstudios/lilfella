@@ -1,5 +1,6 @@
 #include "synth.h"
 #include <math.h>
+#include "lcd.h"   // (PI_F, TAU_F)
 
 namespace lf {
 
@@ -9,7 +10,7 @@ namespace lf {
 //   COO   their voice: a round tone with a little throat in it (vib = wobble depth)
 //   SQSH  a squelch: noise squeezed through a moving resonance, f0 -> f1 (vib = how many wobbles in the note)
 //   BUB   bubbles: a froth of tiny rising chirps between f0 and f1 (vib = bubbles per second)
-//   PUFF  soft air (low-passed noise), f0 = brightness 0..1
+//   PUFF  soft air (low-passed noise), f0 -> f1 = brightness sweep (0..1)
 //   PURR  a low rumble, chopped
 //   REST  silence
 struct SynthNote {
@@ -130,7 +131,7 @@ static const SoundDef kSounds[SND_COUNT] = {
   TWO(A_TITLE1, B_TITLE1), TWO(A_TITLE2, B_TITLE2), TWO(A_TITLE3, B_TITLE3), TWO(A_TITLE4, B_TITLE4),
   TWO(A_TITLE5, B_TITLE5), TWO(A_TITLE6, B_TITLE6), TWO(A_TITLE7, B_TITLE7), TWO(A_TITLE8, B_TITLE8)};
 
-static constexpr float TAU = 6.2831853f;
+static constexpr float REF_SR = 16000.0f;   // the sample rate the filter coefficients below were tuned at (scaled to the real rate)
 
 int synthMillis(Sound s) {
   if (s >= SND_COUNT) return 0;
@@ -184,28 +185,28 @@ float SynthVoice::run(Track& t) {
       t.phase += f * inv; if (t.phase >= 1) t.phase -= 1;
       const float atk = sec < 0.004f ? sec / 0.004f : 1.0f;
       const float env = atk * expf(-3.2f * u) * (u > 0.85f ? (1.0f - u) / 0.15f : 1.0f);
-      const float p = TAU * t.phase;
+      const float p = TAU_F * t.phase;
       s = (sinf(p) + 0.18f * sinf(2 * p)) * env;
       break;
     }
     case SINE: case COO: {
       float f = (n.f0 + (n.f1 - n.f0) * u) * tune_;
-      if (n.vib > 0) f *= 1.0f + n.vib * sinf(TAU * 6.0f * sec);
+      if (n.vib > 0) f *= 1.0f + n.vib * sinf(TAU_F * 6.0f * sec);
       t.phase += f * inv; if (t.phase >= 1) t.phase -= 1;
       float env = (u < 0.08f ? u / 0.08f : 1.0f) * (u > 0.75f ? (1.0f - u) / 0.25f : 1.0f);
-      const float p = TAU * t.phase;
+      const float p = TAU_F * t.phase;
       if (n.wave == SINE) s = sinf(p) * env;
       else {   // a round, wet little throat: the overtones swell and fade (a gargle), not a steady buzz
-        const float wet = 0.5f + 0.5f * sinf(TAU * 23.0f * sec);
+        const float wet = 0.5f + 0.5f * sinf(TAU_F * 23.0f * sec);
         s = (0.62f * sinf(p) + (0.20f + 0.18f * wet) * sinf(2 * p) + 0.14f * wet * sinf(3 * p + 0.5f)) * env * (0.88f + 0.12f * wet);
       }
       break;
     }
     case SQSH: {   // noise through a state-variable band-pass whose centre slides and wobbles
-      const float wob = n.vib > 0 ? 0.5f - 0.5f * cosf(TAU * n.vib * u) : 1.0f;
+      const float wob = n.vib > 0 ? 0.5f - 0.5f * cosf(TAU_F * n.vib * u) : 1.0f;
       float fc = (n.f0 + (n.f1 - n.f0) * u) * (0.7f + 0.6f * wob) * tune_;
       if (fc > sr_ * 0.22f) fc = sr_ * 0.22f;
-      const float k = 2.0f * sinf(3.14159f * fc * inv), q = 0.22f;
+      const float k = 2.0f * sinf(PI_F * fc * inv), q = 0.22f;
       const float w = noise();
       t.bl += k * t.bp;
       const float hp = w - t.bl - q * t.bp;
@@ -229,31 +230,28 @@ float SynthVoice::run(Track& t) {
       t.bubPos++;
       t.phase += t.bubF * (1.0f + 0.9f * bu) * inv; if (t.phase >= 1) t.phase -= 1;
       const float env = (u < 0.06f ? u / 0.06f : 1.0f) * (u > 0.7f ? (1.0f - u) / 0.3f : 1.0f);
-      s = sinf(TAU * t.phase) * sinf(3.14159f * bu) * env;
+      s = sinf(TAU_F * t.phase) * sinf(PI_F * bu) * env;
       break;
     }
     case PUFF: {
       const float c = n.f0 + (n.f1 - n.f0) * u;
-      t.lp += (noise() - t.lp) * (0.04f + 0.5f * c) * (16000.0f * inv);
+      t.lp += (noise() - t.lp) * (0.04f + 0.5f * c) * (REF_SR * inv);
       const float env = (u < 0.1f ? u / 0.1f : 1.0f) * (1.0f - u);
       s = t.lp * 1.6f * env;
       break;
     }
     default: {   // PURR
-      t.lp += (noise() - t.lp) * 0.07f * (16000.0f * inv);
+      t.lp += (noise() - t.lp) * 0.07f * (REF_SR * inv);
       t.phase += n.f0 * 0.4f * inv; if (t.phase >= 1) t.phase -= 1;
-      const float chop = 0.3f + 0.7f * (0.5f + 0.5f * sinf(TAU * t.phase));
+      const float chop = 0.3f + 0.7f * (0.5f + 0.5f * sinf(TAU_F * t.phase));
       const float env = (u < 0.1f ? u / 0.1f : 1.0f) * (u > 0.8f ? (1.0f - u) / 0.2f : 1.0f);
-      s = (t.lp * 3.0f + 0.5f * sinf(TAU * t.phase * 2.5f)) * chop * env;
+      s = (t.lp * 3.0f + 0.5f * sinf(TAU_F * t.phase * 2.5f)) * chop * env;
       break;
     }
   }
   return s * n.amp;
 }
 
-float SynthVoice::next() {
-  const float s = run(a_) + run(b_);
-  return s;
-}
+float SynthVoice::next() { return run(a_) + run(b_); }
 
 }  // namespace lf

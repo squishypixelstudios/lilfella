@@ -1,5 +1,5 @@
-// Display, touch, IMU, RTC, storage, for both boards (board.h has the pins and what differs between them).
-// Talks to the chips directly over I2C; the libraries are Arduino_GFX for the QSPI display and, on the 2.16 only,
+// Display, touch, IMU, RTC, power chip, storage, for all three boards (board.h has the pins and what differs).
+// Talks to the chips directly over I2C; the libraries are Arduino_GFX for the display and, on the 2.16 only,
 // SensorLib for its CST9220 touch controller.
 #include <Arduino.h>
 #include <string.h>
@@ -54,16 +54,12 @@ static_assert(LW * 5 / 4 == PIC_W && LH * 5 / 4 == PIC_H && LW % 4 == 0 && LH % 
 static_assert(LW * 2 == PIC_W && LH * 2 == PIC_H, "the picture is the frame at 2x");
 #endif
 static_assert(PIC_X0 >= 0 && PIC_Y0 >= 0 && PIC_X0 + PIC_W <= LCD_WIDTH && PIC_Y0 + PIC_H <= LCD_HEIGHT, "the game's picture must fit on the panel");
-#ifndef KK_TOUCH_LOG
-#define KK_TOUCH_LOG 1   // print raw touch coordinates to the Serial Monitor (max 4 lines/s while touching)
+#ifndef LF_TOUCH_LOG
+#define LF_TOUCH_LOG 0   // 1 = print raw touch coordinates to the Serial Monitor (max 4 lines/s while touching)
 #endif
 
-// Touch tuning from the colour version, all OFF = controller defaults. Set to 1 to try them again.
 #ifndef TOUCH_KEEP_AWAKE
-#define TOUCH_KEEP_AWAKE 0         // CST816: disable auto-sleep (reg 0xFE=1) + report continuously while touched (0xFA=0x40)
-#endif
-#ifndef TOUCH_RELEASE_DEBOUNCE
-#define TOUCH_RELEASE_DEBOUNCE 0   // treat up to 2 missed samples as "still touching"
+#define TOUCH_KEEP_AWAKE 0         // CST816: disable auto-sleep (reg 0xFE=1) + report continuously while touched (0xFA=0x40); board.h turns it on where needed
 #endif
 // Boards with TOUCH_HOLD (the 2.16's CST9220, the LCD-1.83's CST816): the controller is read by polling, and a read
 // that lands between two of its own scans can come back empty while the finger is still down. A finger counts as
@@ -150,7 +146,7 @@ void begin() {
     Serial.println("[hal] touch not answering");
   }
 #else
-  // touch: controller left at its power-on defaults (no register tweaks). Just find which address answers.
+  // touch: CST816 / FT3168, left at its power-on defaults (except TOUCH_KEEP_AWAKE, below). Find which address answers.
 #ifdef TP_RST
   pinMode(TP_RST, OUTPUT);   // (its reset line is a plain pin on this board)
   digitalWrite(TP_RST, LOW); delay(20);
@@ -373,14 +369,10 @@ bool readTouch(int& x, int& y) {
   static uint32_t seenMs = 0;
   if (got) { seen = true; seenMs = ::millis(); }
   else if (!seen || ::millis() - seenMs > (uint32_t)TOUCH_HOLD_MS) { seen = false; return false; }
-#elif TOUCH_RELEASE_DEBOUNCE
-  static int missed = 100;
-  if (got) missed = 0;
-  else { if (missed < 100) missed++; if (missed > 2) return false; }
 #else
   if (!got) return false;
 #endif
-#if KK_TOUCH_LOG
+#if LF_TOUCH_LOG
   static uint32_t lastLog = 0;
   if (::millis() - lastLog > 250) { lastLog = ::millis(); Serial.printf("[touch] %d,%d\n", lx, ly); }   // panel coords
 #endif

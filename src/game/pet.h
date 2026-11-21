@@ -21,7 +21,7 @@ enum Food : uint8_t { FOOD_KIBBLE, FOOD_TREAT, FOOD_DIET };
 enum Gift : uint8_t { GIFT_NONE, GIFT_FLOWER, GIFT_SHELL, GIFT_PEBBLE, GIFT_BERRY, GIFT_GEM };
 
 enum EventType : uint8_t {
-  EV_NONE, EV_POOP, EV_UNUSED, EV_EXPLORE_GO, EV_GIFT_BACK, EV_ENDING, EV_WOKE_ANGRY, EV_SLEEP, EV_WAKE,
+  EV_NONE, EV_POOP, EV_EXPLORE_GO, EV_GIFT_BACK, EV_ENDING, EV_WOKE_ANGRY, EV_SLEEP, EV_WAKE,
   EV_WARN, EV_SICK   // sick: arg = SickKind
 };
 // What made them sick. Sicknesses stack: each one needs its own dose of medicine.
@@ -74,13 +74,13 @@ struct PetData {
   char name[12];
   uint8_t breed;
   uint8_t evolving;           // 1 = the hidden breed is decided at 1 day old (AGE_BREED)
-  uint8_t pad0[2];            // [0] picked looks, [1] LOCK (see game.cpp)
+  uint8_t pad0[2];            // [0] picked looks, [1] LOCK (packing notes at the top of game.cpp)
   float age;                  // fella-seconds
   float hunger, fun;          // 0..100
   float unused1;              // (was energy, until v0.10: there is no energy any more. Kept so saves keep their layout)
   float health;               // 0..100
   float chonk;                // 0..100 (35 = ideal); 100 -> they dissolve
-  float resent;               // 0..100; 100 -> runs away
+  float resent;               // 0..100; 100 -> they dissolve (END_RAN_AWAY, "Lost trust")
   uint8_t sick[4];            // sicknesses now: [0] starter bug, [1] from hunger, [2] from the light; [3] SF_ flags
   uint8_t droppings;          // in the litter box
   uint8_t floorMess;          // on the floor
@@ -88,7 +88,7 @@ struct PetData {
   uint8_t giftOnFloor;        // Gift enum
   uint8_t sadness;            // 10-minute units spent awake at zero happiness (SAD_LIMIT -> they dissolve)
   uint8_t exploring;
-  uint8_t pad1[2];            // [0] care mistakes, [1] light off
+  uint8_t pad1[2];            // [0] care mistakes, [1] bit 0 light off, bit 1 looks use the tree packing, bits 2-4 Big Blorbus pick
   float digestTimer, nightSleep, exploreTimer, exploreLeft;   // nightSleep: seconds asleep this night
   float nextSick, messAge, nightLight, giftAge;    // nextSick: age (s) of the starter bug (0 = not set); nightLight: of nightSleep, seconds with the light on
   uint16_t giftCount;         // this fella's trophies
@@ -158,13 +158,13 @@ class Pet {
   void clampAll();
 
  private:
-  Event q_[12];
+  static constexpr int QN = 12;   // event queue length
+  Event q_[QN];
   uint8_t qh_ = 0, qt_ = 0;
   void push(EventType t, int a = 0, int b = 0);
   void poop();
 };
 
-int giftValue(uint8_t p);
 const char* endingName(uint8_t e);
 
 }  // namespace lf

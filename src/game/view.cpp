@@ -10,9 +10,11 @@
 namespace lf {
 
 static constexpr int FLOOR = MH - 1;    // bottom dot row things stand on
+static constexpr int FLOOR_MESS_SHOWN = 4;   // floor mess drawn (and tappable) at most this many
+static constexpr int FLOOR_MESS_STEP = 4;    // dots between one floor mess and the next
 
-static int clampi(int v, int a, int b) { return v < a ? a : (v > b ? b : v); }
-static void hearts(Matrix& m, int y, float v);   // (meter pages)
+// which of the four icon columns an x (in logical px) is over
+static int iconColumn(int ax) { return ax < 54 ? 0 : ax < 92 ? 1 : ax < 130 ? 2 : 3; }
 
 // ---------------------------------------------------------------------------------------------
 // sprites for each form
@@ -86,10 +88,10 @@ int Game::eatRoutine() const {
 float Game::eatSecs() const {
   if (absorbsFood()) return ABSORB_SECS;
   const int r = eatRoutine();
-  return r ? eatfx::duration(r) + 0.6f : EAT_SECS;   // a moment's hold on the last frame
+  return r ? eatfx::duration(r) + 0.6f : EAT_SECS;   // a moment's hold on the last frame (EAT_SECS: safety fallback, e.g. the dropper fed from the debug page)
 }
 
-// the open-mouth eating frame drawn for each look
+// the open-mouth eating frame drawn for each look (only the safety-fallback bites below use it)
 int Game::eatSprite(int idle) const {
   switch (idle) {
     case SPR_TN_BEAN: return SPR_TN_BEAN_EAT;
@@ -115,7 +117,7 @@ int Game::eatSprite(int idle) const {
   }
 }
 
-// The four life stages: Lil Blob (baby), Lil Blub (child), Lil Blunkus (teen), Lil Fella (adult).
+// The life stage names: Lil Blob, Lil Blub, Lil Blunkus, Lil Fella, Big Blorbus (or the dropper).
 // Named from the look they actually have, so a new stage shows only once they've grown into it (awake, picked).
 const char* Game::lifeStageName() const {
   const Form f = form();
@@ -160,21 +162,20 @@ const char* Game::lookName(int f) {
     default: return "";
   }
 }
-int Game::lookSprite(int f) const { int idle, alt, sl; blobSprite((Form)f, idle, alt, sl); return idle; }
+int Game::lookSprite(int f) const { int idle, alt, sl; blobSprite((Form)f, idle, alt, sl); return idle; }   // a look's standing sprite
 
 uint8_t Game::coatFill() const {
   if (pet.d.evolving || stageOfForm(form()) < 2) return 0;
   return pet.d.breed == SP_VOID ? SH_MID : 0;   // the void fella is dark all over
 }
 
-// mode: 0 awake, 1 eyes closed, 2 mouth open, 3 asleep. alt: second frame (walk / hop)
 // Big Ballboi: the ball and, inside it, a hamster that slides around with the ball's motion
 void Game::drawBallboi(int x, int y, bool still) {
   m_.sprite(x, y, SPR_BB_BALL_SHELL);
   const int hw = spriteW(SPR_BB_BALL_HAM), hh = spriteH(SPR_BB_BALL_HAM);
   const float hx = still ? 0 : ballHx_, hy = still ? 0 : ballHy_;
-  int px = x + 5 + (int)lroundf(hx), py = y + 6 + (int)lroundf(hy);
-  if (!still && ballSq_ > 0) {   // pressed flat against the ball's wall: wider and shorter... or squeezed thin
+  const int px = x + 5 + (int)lroundf(hx), py = y + 6 + (int)lroundf(hy);
+  if (!still && ballSq_ > 0) {   // pressed flat against the ball's wall: narrower and taller
     const int sw = hw - 2, sh = hh + 1;
     drawSquish(hx > 0 ? px + 2 : px, py - 1, SPR_BB_BALL_HAM, sw, sh, false, sickShade());
     return;
@@ -188,7 +189,7 @@ void Game::updateBall() {
   ballPrevX_ = blobX_;
   if (step > 0.01f) ballRun_ = 1; else if (step < -0.01f) ballRun_ = -1;
   if (moving && !ballWasMoving_) ballHv_ -= ballRun_ * 7;                  // starting to roll: the hamster lags behind
-  if (!moving && ballWasMoving_) { ballHv_ += ballRun_ * 22; ballHy_ = 0; }  // stopping: the hamster carries on into the wall
+  if (!moving && ballWasMoving_) { ballHv_ += ballRun_ * 22; }  // stopping: the hamster carries on into the wall
   if (moving && step != 0) ballHv_ -= (step > 0 ? 1 : -1) * 1.5f;        // each roll step shakes it a little
   ballWasMoving_ = moving;
   ballHv_ += (-26.0f * ballHx_ - 3.0f * ballHv_) * dt;                      // a spring pulls it back to the middle
@@ -202,6 +203,7 @@ void Game::updateBall() {
 // Sick: a speckled body, droopy half-shut eyes and a shiver now and then (every look, the same way)
 uint8_t Game::sickShade() const { return pet.sick() ? (coatFill() == SH_MID ? SH_FAINT : SH_MID) : 0; }
 
+// mode: 0 awake, 1 eyes closed, 2 mouth open, 3 asleep. alt: second frame (walk / hop)
 void Game::drawBlob(int x, int y, bool flip, int mode, bool alt) {
   const Form f = form();
   int idle, a2, sl;
@@ -239,14 +241,13 @@ int Game::gameSprite() const {
     case F_S0: return SPR_MINI_ROUND;
     case F_S0B: return SPR_MINI_MOCHI;
     case F_S0C: return SPR_MINI_CHEEKS;
-    case F_BB_BLOBBERT: case F_BB_BALLBOI: case F_BB_ALIEN: { int idle, alt, sl; blobSprite(lilFellaForm(), idle, alt, sl); return idle; }   // the games use the Lil Fella they grew from
-    default: { int idle, alt, sl; blobSprite(form(), idle, alt, sl); return idle; }
+    case F_BB_BLOBBERT: case F_BB_BALLBOI: case F_BB_ALIEN: return lookSprite(lilFellaForm());   // the games use the Lil Fella they grew from
+    default: return lookSprite(form());
   }
 }
 void Game::drawGameBlob(int x, int y, bool flip, int mode, bool alt) {
   const int sp = gameSprite();
-  int idle, a2, sl; blobSprite(form(), idle, a2, sl);
-  if (sp == idle) { drawBlob(x, y, flip, mode, alt); return; }
+  if (sp == lookSprite(form())) { drawBlob(x, y, flip, mode, alt); return; }
   m_.sprite(x, y - (alt ? 1 : 0), sp, flip, mode);
 }
 
@@ -258,7 +259,7 @@ void Game::drawIcons(Frame& f) {
   const bool call = callReason() != CR_NONE;
   int pressed = -1;   // the slot under the finger
   if (in.down) {   // (the same spot a tap will be judged by, so the icon that lights is the one that fires)
-    const int col = in.ax < 54 ? 0 : in.ax < 92 ? 1 : in.ax < 130 ? 2 : 3;
+    const int col = iconColumn(in.ax);
     if (in.py < MY - 4) pressed = col;
     else if (in.py > MY1 + 4) pressed = 4 + col;
   }
@@ -277,7 +278,7 @@ bool Game::iconTapped(int& which) const {
   // Which icon: by where the finger rested over the whole press (in.ax), not the very first spot it touched. A
   // fingertip lands on its edge and rolls flat, so the first reading can be a few mm to one side: enough to turn
   // Meter into Medicine, its neighbour. (Top or bottom row is still decided by where it went down.)
-  int col = in.ax < 54 ? 0 : in.ax < 92 ? 1 : in.ax < 130 ? 2 : 3;
+  const int col = iconColumn(in.ax);
   if (in.py < MY - 4) { which = ICON_AT[col]; return true; }
   if (in.py > MY1 + 4) { which = ICON_AT[4 + col]; return true; }
   return false;
@@ -286,8 +287,8 @@ bool Game::iconTapped(int& which) const {
 // The LCD's touch area runs edge to edge and right up to the icon rows (no dead strips in between).
 bool Game::inMatrix(int x, int y, int& dx, int& dy) const {
   if (x < 0 || x >= W || y < MY - 4 || y > MY1 + 4) return false;
-  dx = clampi((x - MX) / DOT, 0, MW - 1);
-  dy = clampi((y - MY) / DOT, 0, MH - 1);
+  dx = clampInt((x - MX) / DOT, 0, MW - 1);
+  dy = clampInt((y - MY) / DOT, 0, MH - 1);
   return true;
 }
 
@@ -319,7 +320,7 @@ void Game::doIcon(int ic) {
   // real: a sickness cured, the light turned off for a sleeping fella (see below).
   if (sv.hasBlob && form() != F_DROPPER && ic != IC_MEDS && ic != IC_LIGHT) markIcon(ic);
   if (scr == S_MENU && selIcon_ == ic) { sound(SND_BACK); setScreen(S_MAIN); return; }   // same icon again: back out
-  if (ic == IC_METER) { sound(SND_MENU); selIcon_ = ic; meterPage_ = 0; setScreen(S_METER); selIcon_ = ic; return; }
+  if (ic == IC_METER) { sound(SND_MENU); selIcon_ = ic; meterPage_ = 0; setScreen(S_METER); return; }
   if (ic == IC_LIGHT) {   // the bulb is a switch: a soft click off, a bright one on
     setLight(!lightOff()); sound(lightOff() ? SND_LIGHT_OFF : SND_LIGHT_ON);
     if (lightOff() && pet.sleeping && sv.hasBlob && form() != F_DROPPER) markIcon(IC_LIGHT);   // the light lesson: off while they sleep
@@ -329,13 +330,13 @@ void Game::doIcon(int ic) {
     if (why == CR_SICK && pet.sickStack() > 1) { char b[12]; snprintf(b, sizeof b, "SICK X%d", pet.sickStack()); say(b, 2.5f); }
     else if (why != CR_NONE) say(reasonText(why), 2.5f);
     setScreen(S_MAIN); return;
-  }   // all good: nothing to say
+  }
   if (!sv.hasBlob || form() == F_DROPPER) { setScreen(S_MAIN); return; }
   if (pet.d.exploring) { sound(SND_NOPE); say("OUT"); setScreen(S_MAIN); return; }
   const bool asleep = pet.sleeping;
   switch (ic) {
     case IC_FEED:
-      if (stageOfForm(form()) == 4) {   // Big Blorbus doesn't eat: the Feed icon is a star game instead
+      if (stageOfForm(form()) == 4) {   // Big Blorbus has no meals: the Feed icon is the Orbit star game (a good round earns a snack)
         if (asleep) { sound(SND_NOPE); say("ZZZ"); setScreen(S_MAIN); return; }
         sound(SND_MENU); memset(&orb_, 0, sizeof orb_); selIcon_ = ic; setScreen(S_ORBIT); return;
       }
@@ -360,13 +361,11 @@ void Game::doIcon(int ic) {
 // the home LCD
 // ---------------------------------------------------------------------------------------------
 void Game::updateBlobWalk() {
-  int idle, alt, sl;
-  blobSprite(form(), idle, alt, sl);
-  const int w = spriteW(idle);
-  const int fm = pet.d.floorMess > 4 ? 4 : pet.d.floorMess;
+  const int w = spriteW(lookSprite(form()));
+  const int fm = pet.d.floorMess > FLOOR_MESS_SHOWN ? FLOOR_MESS_SHOWN : pet.d.floorMess;
   const bool boxOut = pet.d.droppings > 0;   // the litter box is out (bottom right) while there's poop in it
   // the whole floor is theirs, except the box and the mess at the right
-  int xmax = fm || boxOut ? BOX_X - 1 - w - fm * 4 : MW - w;
+  int xmax = fm || boxOut ? BOX_X - 1 - w - fm * FLOOR_MESS_STEP : MW - w;
   if (xmax < 0) xmax = 0;
   // and keep off a gift at the left, so it can be tapped on its own (a very wide fella with a full floor may
   // still have to stand partly over it)
@@ -400,24 +399,23 @@ void Game::drawSickIcon(int cx, int cy, int w) {
   if (n) {
     int kinds[SICK_KINDS], nk = 0;
     for (int k = 0; k < SICK_KINDS; k++) if (pet.d.sick[k]) kinds[nk++] = k;
-    const int k = kinds[((int)(anim_ / 1.0f)) % nk];
+    const int k = kinds[((int)anim_) % nk];
     sp = k == SICK_BUG ? SPR_SICK_BUG : k == SICK_HUNGER ? SPR_SICK_HUNGER : SPR_SICK_LIGHT;
   } else if (pet.d.health < 20) sp = SPR_SKULL;
   if (sp < 0) return;
   const int iw = spriteW(sp), tw = n > 1 ? 4 : 0;
   int ix = cx + w;                                       // right of the head, or left when there's no room
   if (ix + iw + tw > MW) ix = cx - iw - tw - 1;
-  ix = clampi(ix, 0, MW - iw - tw);
-  const int iy = clampi(cy - 3, 0, MH - spriteH(sp));
+  ix = clampInt(ix, 0, MW - iw - tw);   // (kept on the screen either way)
+  const int iy = clampInt(cy - 3, 0, MH - spriteH(sp));
   m_.sprite(ix, iy, sp);
   if (n > 1) { char b[2] = {(char)('0' + (n > 9 ? 9 : n)), 0}; m_.small(ix + iw + 1, iy, b); }
 }
 
 // Draws the room contents (fella, mess, gifts). withBlob=false leaves the fella out.
 void Game::drawScene(bool withBlob) {
-  int idle, alt, sl;
   const Form f = form();
-  blobSprite(f, idle, alt, sl);
+  const int idle = lookSprite(f);
   const int h = spriteH(idle);
   const int cx = (int)blobX_, cy = FLOOR - h;
   if (withBlob && !pet.d.exploring) {
@@ -431,7 +429,7 @@ void Game::drawScene(bool withBlob) {
       const bool blink = blinkT_ < 0;
       drawBlob(cx, cy, faceLeft_, blink ? 1 : 0, stepPhase_ == 1);
       drawSickIcon(cx, cy, spriteW(idle));
-      if (pet.grump > 0 && ((int)(anim_ * 2) & 1)) m_.sprite(clampi(cx - 3, 0, MW), clampi(cy - 2, 0, MH), SPR_ANGRY);
+      if (pet.grump > 0 && ((int)(anim_ * 2) & 1)) m_.sprite(clampInt(cx - 3, 0, MW), clampInt(cy - 2, 0, MH), SPR_ANGRY);
     }
   }
   if (pet.d.exploring && withBlob) {   // they're out exploring: a goo trail wobbles off the screen
@@ -440,11 +438,10 @@ void Game::drawScene(bool withBlob) {
   }
   drawLitter(pet.d.droppings, pet.d.floorMess);
   // the exploring gift, bottom-left
-  const int ix = 0;
   if (pet.d.giftOnFloor) {
     const uint8_t gt = pet.d.giftOnFloor;
     const int sp = gt == GIFT_SHELL ? SPR_SHELL : gt == GIFT_PEBBLE ? SPR_STONE : gt == GIFT_BERRY ? SPR_BERRY : gt == GIFT_GEM ? SPR_GEM : SPR_FLOWER;
-    m_.sprite(ix, FLOOR - spriteH(sp), sp);
+    m_.sprite(0, FLOOR - spriteH(sp), sp);
   }
 }
 
@@ -458,12 +455,13 @@ void Game::drawLitter(int boxPoos, int floorPoos, bool box) {
   if (boxPoos >= 1 || box) {
     for (int x = BOX_X; x < BOX_X + BOX_W; x++) m_.set(x, FLOOR, SH_INK);                                  // the tray
     for (int y = FLOOR - 3; y < FLOOR; y++) { m_.set(BOX_X, y, SH_INK); m_.set(BOX_X + BOX_W - 1, y, SH_INK); }
-    static const int8_t PX[6] = {1, 4, 7, 2, 6, 4}, PY[6] = {2, 2, 2, 4, 4, 6};   // three along the bottom, two on those, one on top
-    static const int8_t LEAN[BOX_MAX - 6] = {1, 0, -1, 0, 1, 0};                  // then the tower: none of it quite straight
+    constexpr int PILE = 6;   // the first six sit in a tidy pile
+    static const int8_t PX[PILE] = {1, 4, 7, 2, 6, 4}, PY[PILE] = {2, 2, 2, 4, 4, 6};   // three along the bottom, two on those, one on top
+    static const int8_t LEAN[BOX_MAX - PILE] = {1, 0, -1, 0, 1, 0};               // then the tower: none of it quite straight
     int tx = BOX_X + 4, ty = FLOOR - 2;   // the one on top
     for (int i = 0; i < boxPoos; i++) {
-      if (i < 6) { tx = BOX_X + PX[i]; ty = FLOOR - PY[i]; }
-      else { tx = BOX_X + 4 + LEAN[i - 6] + (int)lroundf(sinf(anim_ * 1.7f) * (i - 5) * 0.3f); ty = FLOOR - 6 - 2 * (i - 5); }
+      if (i < PILE) { tx = BOX_X + PX[i]; ty = FLOOR - PY[i]; }
+      else { tx = BOX_X + 4 + LEAN[i - PILE] + (int)lroundf(sinf(anim_ * 1.7f) * (i - 5) * 0.3f); ty = FLOOR - 6 - 2 * (i - 5); }
       m_.sprite(tx, ty, SPR_POO);
     }
     const int top = boxPoos > 6 ? 6 + 2 * (boxPoos - 6) : boxPoos > 5 ? 6 : boxPoos > 3 ? 4 : 2;
@@ -483,8 +481,8 @@ void Game::drawLitter(int boxPoos, int floorPoos, bool box) {
       m_.set(tx + 2, ty - 4, SH_INK); m_.set(tx + 2, ty - 3, SH_INK); m_.set(tx + 3, st ? ty - 4 : ty - 3, SH_INK);
     }
   }
-  for (int i = 0; i < floorPoos && i < 4; i++) {
-    const int x = BOX_X - 4 - i * 4;
+  for (int i = 0; i < floorPoos && i < FLOOR_MESS_SHOWN; i++) {
+    const int x = BOX_X - FLOOR_MESS_STEP - i * FLOOR_MESS_STEP;
     m_.sprite(x, FLOOR - 1, SPR_POO);
     m_.sprite(x, FLOOR - 5, st ^ (i & 1) ? SPR_STINK1 : SPR_STINK2);
   }
@@ -500,32 +498,28 @@ void Game::drawZzz(int cx, int cy, int w, uint8_t shade) {
     const int x = x0 + (right ? 1 : -1) * (int)(p * 7) - (right ? 0 : spriteW(sp));
     const int y = y0 - spriteH(sp) - (int)(p * 12) + (((int)(p * 12)) & 1);   // a little wobble on the way up
     if (y < -spriteH(sp)) continue;
-    m_.sprite(clampi(x, 0, MW - spriteW(sp)), y, sp, false, 0, 0, shade);
+    m_.sprite(clampInt(x, 0, MW - spriteW(sp)), y, sp, false, 0, 0, shade);
   }
 }
 
 void Game::drawMain(bool interactive) {
   if (form() != F_DROPPER && sv.hasBlob) updateBlobWalk();
+  auto drawClock = [&](uint8_t shade) {   // the time in a cleared strip at the top
+    char b[8];
+    snprintf(b, sizeof b, "%02d:%02d", hour, minute);
+    m_.rect(4, 0, 32, 9, 0);
+    m_.textCenter(1, b, shade);
+  };
   if (lightOff()) {   // lights out: a dark LCD, only the Zs
     if (pet.sleeping && sv.hasBlob) {   // the Zs drift up from where they're sleeping
-      int idle, alt, sl;
-      blobSprite(form(), idle, alt, sl);
+      const int idle = lookSprite(form());
       drawZzz((int)blobX_, FLOOR - spriteH(idle), spriteW(idle), SH_FAINT);   // (shade 0 would read as an unlit dot)
     }
-    if (clockShowT_ > 0) {   // a tap in the dark shows the time too (light dots on the dark LCD, over the Zs)
-      char b[8];
-      snprintf(b, sizeof b, "%02d:%02d", hour, minute);
-      m_.rect(4, 0, 32, 9, 0);
-      m_.text((MW - Matrix::textWidth(b)) / 2, 1, b, SH_FAINT);
-    }
+    if (clockShowT_ > 0) drawClock(SH_FAINT);   // a tap in the dark shows the time too (light dots on the dark LCD, over the Zs)
   } else {
     drawScene(true);
-    if (clockShowT_ > 0) {
-      char b[8];
-      snprintf(b, sizeof b, "%02d:%02d", hour, minute);
-      m_.rect(4, 0, 32, 9, 0);
-      m_.textCenter(1, b);
-    } else if (msgT_ > 0) {
+    if (clockShowT_ > 0) drawClock(SH_INK);
+    else if (msgT_ > 0) {
       m_.rect(0, 0, MW, 6, 0);
       m_.smallCenter(0, msg_);
     }
@@ -561,15 +555,14 @@ void Game::mainInput() {
   if (pet.d.giftOnFloor) consider(T_GIFT, 0, FLOOR - 4, 8, 5);
   const bool hasPet = sv.hasBlob && form() != F_DROPPER;
   if (hasPet && !pet.d.exploring && !pet.sleeping) {
-    int idle, alt, sl;
-    blobSprite(form(), idle, alt, sl);
+    const int idle = lookSprite(form());
     const int h = spriteH(idle);
     consider(T_BLOB, (int)blobX_, FLOOR + 1 - h, spriteW(idle), h);
   }
   if (hasPet) {
     const int boxH = pet.d.droppings > 6 ? 10 + 2 * (pet.d.droppings - 6) : 10;   // (a tower of it is taller)
     if (pet.d.droppings) consider(T_BOX, BOX_X, FLOOR + 1 - boxH, BOX_W, boxH);   // the litter box: tap it to clean up
-    for (int i = 0; i < pet.d.floorMess && i < 4; i++) consider(T_BOX, BOX_X - 4 - i * 4, FLOOR - 2, 3, 3);   // mess in front
+    for (int i = 0; i < pet.d.floorMess && i < FLOOR_MESS_SHOWN; i++) consider(T_BOX, BOX_X - FLOOR_MESS_STEP - i * FLOOR_MESS_STEP, FLOOR - 2, 3, 3);   // mess in front
   }
   switch (best) {
     case T_GIFT: pet.takeGift(); pet.petIt(5); sound(SND_COIN); say("THANKS!"); return;   // their treasure, for you
@@ -583,7 +576,7 @@ void Game::mainInput() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// menus (feed / light / play)
+// feeding, and the Play menu
 // ---------------------------------------------------------------------------------------------
 // Feed: a meal, every time (no menu)
 void Game::feedMeal() {
@@ -620,7 +613,7 @@ void Game::screenMenu() {
   if (!in.tap || !inMatrix(in.px, in.py, dx, dy)) return;
   sound(SND_TAP);
   switch (cellAt(dx, dy)) {
-    case 0: memset(&dg_, 0, sizeof dg_); setScreen(S_DODGE); break;   // MOVE (it was Dodge)
+    case 0: memset(&dg_, 0, sizeof dg_); setScreen(S_DODGE); break;   // MOVE is Dodge's name on screen
     case 1: memset(&rn_, 0, sizeof rn_); setScreen(S_RUN); break;
     case 2: startYeet(); break;
     default: startPop(); break;                                      // POP: the bubble shooter (pop.cpp)
@@ -682,8 +675,7 @@ void Game::drawBelly(int x, int y, int id, int ew, int eh, bool flip) {
 // and they shrink back to their own size, content. The food never jumps: it stays where it landed, lifting a
 // little as the belly forms round it.
 void Game::drawAbsorb(float t) {
-  int idle, alt, sl;
-  blobSprite(form(), idle, alt, sl);
+  const int idle = lookSprite(form());
   const int bw = spriteW(idle), bh = spriteH(idle), by = FLOOR - bh;
   const int food = an_ == AN_EAT_SNACK ? SPR_SNACK : SPR_MEAL;
   const Sprite& fs = SPRITES[food];
@@ -691,7 +683,7 @@ void Game::drawAbsorb(float t) {
   // The food lands on the roomier side. If it lands close by, they hop back in surprise first, so there's a walk.
   // (From where they stood when it began, not blobX_: that is moved to where they end up before the last frame is
   // drawn, and laying the scene out again from there put the food, and them, on the other side for a frame.)
-  const int startX = clampi(eatFromX_, 0, MW - bw);
+  const int startX = clampInt(eatFromX_, 0, MW - bw);
   const bool right = startX + bw / 2 < MW / 2;          // food on the right, so they walk right
   const int fx0 = right ? MW - fw - 3 : 3;               // (room on its far side for the body to close round it)
   constexpr int GAP = 3;                                 // dots between them and the food when they stop
@@ -708,8 +700,8 @@ void Game::drawAbsorb(float t) {
   if (t < T_WALK) {
     if (t < T_HOP && hopBack) {      // boing: a startled hop back, away from the food
       const float k = t / T_HOP;
-      drawBlob(startX + (int)((backX - startX) * k), by - (int)(4 * sinf(k * 3.14159f)), right, 0, true);
-      if (t < 0.3f) m_.small(clampi(startX + bw / 2 - 1, 0, MW - 3), clampi(by - 9, 0, MH), "!");
+      drawBlob(startX + (int)((backX - startX) * k), by - (int)(4 * sinf(k * PI_F)), right, 0, true);
+      if (t < 0.3f) m_.small(clampInt(startX + bw / 2 - 1, 0, MW - 3), clampInt(by - 9, 0, MH), "!");
     } else {                         // a slow wobble over, a dot at a time
       const float k = (t - (hopBack ? T_HOP : 0)) / (T_WALK - (hopBack ? T_HOP : 0));
       drawBlob(walkFrom + (int)((stopX - walkFrom) * k), by - (((int)(t * 5)) & 1), !right, 0, ((int)(t * 5)) & 1);
@@ -719,7 +711,7 @@ void Game::drawAbsorb(float t) {
   }
   if (t >= T_DONE) {                 // full and content, eyes shut, where the food was
     drawBlob(endX, by, !right, 1, false);
-    if (t < T_DONE + 0.6f && ((int)(t * 6) & 1)) m_.sprite(clampi(right ? endX - 3 : endX + bw, 0, MW - 3), clampi(by - 3, 0, MH), SPR_SPARK);
+    if (t < T_DONE + 0.6f && ((int)(t * 6) & 1)) m_.sprite(clampInt(right ? endX - 3 : endX + bw, 0, MW - 3), clampInt(by - 3, 0, MH), SPR_SPARK);
     blobX_ = blobTx_ = (float)endX; faceLeft_ = !right;   // they stay where they ate
     return;
   }
@@ -730,7 +722,7 @@ void Game::drawAbsorb(float t) {
   if (t < T_REACH) ew = (int)lroundf(GAP * ease((t - T_WALK) / (T_REACH - T_WALK)));               // a side of the body reaches the food
   else if (t < T_ENGULF) {                                                                             // ...flows over it and closes round it
     const float k = ease((t - T_REACH) / (T_ENGULF - T_REACH));
-    ew = GAP + (int)lroundf((reachW - GAP) * k); eh = (int)lroundf(1.0f * k);
+    ew = GAP + (int)lroundf((reachW - GAP) * k); eh = (int)lroundf(k);
   } else if (t < T_PULL) {                                                                             // the rest of the body follows: a belly, the food in it
     const float k = ease((t - T_ENGULF) / (T_PULL - T_ENGULF));
     ew = reachW + (int)lroundf((bellyW - reachW) * k); eh = 1 + (int)lroundf((bellyH - 1) * k);
@@ -772,9 +764,7 @@ void Game::drawAbsorb(float t) {
 void Game::screenAnim() {
   anT_ += dt;
   const float t = anT_;
-  int idle, alt, sl;
-  const Form f = form();
-  blobSprite(f, idle, alt, sl);
+  const int idle = lookSprite(form());
   const int w = spriteW(idle), h = spriteH(idle);
   const int cy = FLOOR - h;
   switch (an_) {
@@ -787,6 +777,7 @@ void Game::screenAnim() {
         for (int i = 0; i < n; i++) if (t - dt < cue[i] && t >= cue[i]) sound(SND_EAT);
         break;
       }
+      // Safety fallback (every look has a routine or absorbs; only the dropper fed from the debug page lands here):
       // 3 bites: mouth wide open on the food, then a chomp (mouth shut, eyes closed) that takes a piece off
       const int bite = (int)(t / 0.8f);
       const bool open = bite < 3 && fmodf(t, 0.8f) < 0.4f;
@@ -808,7 +799,7 @@ void Game::screenAnim() {
       const bool fl = ((int)(t * 4)) & 1;
       const int cx = (MW - w) / 2;
       drawBlob(cx, cy, fl, 0, false);
-      m_.sprite(clampi(cx + w, 0, MW - 3), clampi(cy - 2, 0, MH), SPR_ANGRY);
+      m_.sprite(clampInt(cx + w, 0, MW - 3), clampInt(cy - 2, 0, MH), SPR_ANGRY);
       if (t < dt * 1.5f) sound(SND_NOPE);
       break;
     }
@@ -827,25 +818,25 @@ void Game::screenAnim() {
       if (nx < 0) nx = cx + w - 1;
       const int sx = t < 1.0f ? MW - (int)((MW - (nx + 1)) * t) : t < 1.1f ? nx + 1 : nx;
       m_.sprite(sx, ny - 2, SPR_SYRINGE);
-      if (t > 1.2f && ((int)(t * 6) & 1)) m_.sprite(clampi(cx + w, 0, MW - 3), clampi(cy - 3, 0, MH), SPR_SPARK);
+      if (t > 1.2f && ((int)(t * 6) & 1)) m_.sprite(clampInt(cx + w, 0, MW - 3), clampInt(cy - 3, 0, MH), SPR_SPARK);
       if (t >= 1.2f && t - dt < 1.2f) sound(SND_SPARKLE);   // it's working
       break;
     }
     case AN_POTTY: {   // arg 1: in the box, 2: on the floor (a protest). Walk over, squat, go, step out.
       const bool box = anArg_ == 1;
-      const int home = clampi((int)blobX_, 0, MW - w);
+      const int home = clampInt((int)blobX_, 0, MW - w);
       // in the box: they walk over to it (the box comes out for them), squat over it, and step back off it
-      const int spot = box ? clampi(BOX_X + BOX_W / 2 - w / 2, 0, MW - w) : home;
-      const int fm = pet.d.floorMess > 4 ? 4 : pet.d.floorMess;
-      const int back = box ? clampi(BOX_X - 1 - w - fm * 4, 0, home) : home;   // (where they may stand once the box is out)
+      const int spot = box ? clampInt(BOX_X + BOX_W / 2 - w / 2, 0, MW - w) : home;
+      const int fm = pet.d.floorMess > FLOOR_MESS_SHOWN ? FLOOR_MESS_SHOWN : pet.d.floorMess;
+      const int back = box ? clampInt(BOX_X - 1 - w - fm * FLOOR_MESS_STEP, 0, home) : home;   // (where they may stand once the box is out)
       const bool done = t > 1.9f;                         // the poop appears here
       const bool squat = t >= 0.5f && t < 2.2f;
       const int x = t < 0.5f ? home + (int)lroundf((spot - home) * t / 0.5f) : t < 2.2f ? spot : spot + (int)lroundf((back - spot) * ((t - 2.2f) / 0.5f > 1 ? 1 : (t - 2.2f) / 0.5f));
       drawLitter(pet.d.droppings - (box && !done ? 1 : 0), pet.d.floorMess - (!box && !done ? 1 : 0), box);
       drawBlob(x, cy, false, squat ? 1 : 0, (t < 0.5f || t >= 2.2f) && ((int)(t * 6) & 1));
-      if (squat && !done && ((int)(t * 4) & 1)) { m_.set(clampi(x + w, 0, MW - 1), cy + 1, SH_INK); m_.set(clampi(x + w + 1, 0, MW - 1), cy, SH_INK); }   // straining
-      if (!box && ((int)(t * 3) & 1)) m_.sprite(clampi(x + w, 0, MW - 3), clampi(cy - 2, 0, MH), SPR_ANGRY);
-      if (done && box && t < 2.4f) m_.sprite(clampi(x + w / 2 - 1, 0, MW - 3), clampi(cy - 3, 0, MH), SPR_SPARK);
+      if (squat && !done && ((int)(t * 4) & 1)) { m_.set(clampInt(x + w, 0, MW - 1), cy + 1, SH_INK); m_.set(clampInt(x + w + 1, 0, MW - 1), cy, SH_INK); }   // straining
+      if (!box && ((int)(t * 3) & 1)) m_.sprite(clampInt(x + w, 0, MW - 3), clampInt(cy - 2, 0, MH), SPR_ANGRY);
+      if (done && box && t < 2.4f) m_.sprite(clampInt(x + w / 2 - 1, 0, MW - 3), clampInt(cy - 3, 0, MH), SPR_SPARK);
       if (t >= 0.5f && t - dt < 0.5f) sound(box ? SND_SCRATCH : SND_GRUMBLE);   // they squat (a protest: with a grumble)
       if (t >= 1.9f && t - dt < 1.9f) sound(SND_PLOP);
       break;
@@ -854,21 +845,21 @@ void Game::screenAnim() {
       const int cx = (MW - w) / 2;
       drawBlob(cx, cy, false, anArg_ && t > 0.5f ? 1 : 0, !anArg_ && ((int)(t * 6) & 1));
       const bool shut = anArg_ ? t > 0.5f : t < 0.4f;
-      const int lx = MW / 2 - 4, ly = clampi(cy - 11, 0, MH - 9);
+      const int lx = MW / 2 - 4, ly = clampInt(cy - 11, 0, MH - 9);
       // a little padlock: the body, and the shackle shut or swung open
       m_.rect(lx, ly + 4, 8, 5, SH_INK); m_.rect(lx + 3, ly + 5, 2, 2, SH_BG);
       if (shut) { m_.rect(lx + 1, ly + 1, 1, 3, SH_INK); m_.rect(lx + 6, ly + 1, 1, 3, SH_INK); m_.rect(lx + 2, ly, 4, 1, SH_INK); }
       else { m_.rect(lx + 6, ly, 1, 4, SH_INK); m_.rect(lx + 7, ly - 1 < 0 ? 0 : ly - 1, 4, 1, SH_INK); m_.rect(lx + 11, ly, 1, 2, SH_INK); }
       if (anArg_ && t > 0.5f && t - dt <= 0.5f) sound(SND_LOCK);
       if (!anArg_ && t > 0.4f && t - dt <= 0.4f) sound(SND_UNLOCK);
-      if (t > 0.6f && ((int)(t * 6) & 1)) { m_.sprite(clampi(lx - 5, 0, MW - 3), ly + 2, SPR_SPARK); m_.sprite(clampi(lx + 13, 0, MW - 3), ly + 5, SPR_SPARK); }
+      if (t > 0.6f && ((int)(t * 6) & 1)) { m_.sprite(clampInt(lx - 5, 0, MW - 3), ly + 2, SPR_SPARK); m_.sprite(clampInt(lx + 13, 0, MW - 3), ly + 5, SPR_SPARK); }
       break;
     }
     case AN_PET: {   // eyes closed, a heart floats up
       const int cx = (int)blobX_;
       drawBlob(cx, cy, faceLeft_, 1, false);
-      const int hy = clampi(cy - 2 - (int)(t * 4), 0, MH);
-      m_.sprite(clampi(cx + w / 2 - 3, 0, MW - 7), hy, SPR_HEART_E);
+      const int hy = clampInt(cy - 2 - (int)(t * 4), 0, MH);
+      m_.sprite(clampInt(cx + w / 2 - 3, 0, MW - 7), hy, SPR_HEART_E);
       break;
     }
     case AN_SQUEEZE: {
@@ -941,7 +932,7 @@ void Game::screenAnim() {
     case AN_LEVELUP: {   // small, big, small, big, small, BIG: each swell a little bigger, more stars each time
       constexpr float BEAT = 0.36f;                      // one small-or-big beat; six of them, then a flash
       const int beat = (int)(t / BEAT);
-      float sc = 1.0f;
+      float sc;
       if (beat < 6) {
         static const float S[7] = {1.0f, 0.84f, 1.16f, 0.84f, 1.24f, 0.82f, 1.36f};
         const float k = fmodf(t, BEAT) / BEAT, e = k * k * (3 - 2 * k);
@@ -986,10 +977,10 @@ void Game::screenAnim() {
       break;
     }
     case AN_LOCK: say(anArg_ ? "LOCKED" : "UNLOCKED", 2.0f); break;
-    case AN_SQUEEZE: case AN_GROW: say(lifeStageName(), 3.0f); sound(SND_LEVEL); break;   // "LIL BLOB!" etc.; the fanfare lands with the title
+    case AN_SQUEEZE: case AN_GROW: say(lifeStageName(), 3.0f); sound(SND_LEVEL); break;   // the stage name ("LIL BLOB" etc.); the fanfare lands with the title
     case AN_LEVELUP:
-      an_ = AN_NONE;
       if (pendingEvolution()) {   // now the picker
+        an_ = AN_NONE;
         evoSel_ = 0; sound(SND_WIN); setScreen(S_EVOLVE);
         if (in.down) swallow_ = true;   // a finger that was already down doesn't pick a look
         return;
@@ -1004,11 +995,18 @@ void Game::screenAnim() {
 // ---------------------------------------------------------------------------------------------
 // meter pages
 // ---------------------------------------------------------------------------------------------
-static void hearts(Matrix& m, int y, float v) {
+static void hearts(Matrix& m, int y, float v) {   // a meter (0-100) as up to four hearts
   int n = v < 5 ? 0 : (int)ceilf(v / 25.0f);
   if (n > 4) n = 4;
-  for (int i = 0; i < 4; i++) m.sprite(3 + i * 9, y, i < n ? SPR_HEART : SPR_HEART_E);
+  m.hearts(y, n);
 }
+
+// The games' result cards: the score needed for each of the four hearts, and the word that goes with the count.
+static constexpr float DODGE_HEART_AT[4] = {6.0f, 13.0f, 20.0f, 27.0f};   // seconds lasted
+static constexpr float RUN_HEART_AT[4] = {12.0f, 35.0f, 65.0f, 300.0f};   // metres (the 4th heart also needs the tall wall)
+static constexpr int ORBIT_HEART_AT[4] = {5, 11, 18, 26};                 // planets eaten
+template <typename T> static int heartsFor(T score, const T (&at)[4]) { int n = 0; for (T a : at) if (score >= a) n++; return n; }
+static const char* resultWord(int count) { static const char* const WORD[5] = {"OOPS", "OK", "GOOD", "GREAT", "PERFECT!"}; return WORD[count]; }
 
 // LOCK (the padlock icon): asks before locking or unlocking.
 //   locked: they stay at this stage and nothing ends their life (hunger, mess and sickness carry on)
@@ -1062,7 +1060,7 @@ void Game::screenMeter() {
     case 1: m_.textCenter(2, "HUNGRY"); hearts(m_, 15, d.hunger); break;
     case 2: m_.textCenter(2, "HAPPY"); hearts(m_, 15, d.fun); break;
     case 3: m_.textCenter(2, "TRUST"); hearts(m_, 15, 100 - d.resent); break;
-    default: {   // their treasures
+    default: {   // page 4: their treasures found, the sicknesses so far and their life stage
       snprintf(b, sizeof b, "GIFTS %u", (unsigned)(d.giftCount > 999 ? 999 : d.giftCount));
       m_.smallCenter(2, b);
       snprintf(b, sizeof b, "SICK %u", (unsigned)sv.sickCount);
@@ -1072,11 +1070,11 @@ void Game::screenMeter() {
     }
   }
   // page dots
-  for (int i = 0; i < METER_PAGES; i++) m_.set(12 + i * 2, MH - 1, i == meterPage_ ? SH_INK : SH_MID);
+  for (int i = 0; i < METER_PAGES; i++) m_.set((MW - (METER_PAGES * 2 - 1)) / 2 + i * 2, MH - 1, i == meterPage_ ? SH_INK : SH_MID);
   if (scrT_ > 20) { setScreen(S_MAIN); return; }
   int ic;
   if (iconTapped(ic)) {
-    if (ic == IC_METER) { if (++meterPage_ >= METER_PAGES) { sound(SND_BACK); setScreen(S_MAIN); } else sound(SND_PAGE); }
+    if (ic == IC_METER) { scrT_ = 0; if (++meterPage_ >= METER_PAGES) { sound(SND_BACK); setScreen(S_MAIN); } else sound(SND_PAGE); }
     else doIcon(ic);
     return;
   }
@@ -1086,10 +1084,17 @@ void Game::screenMeter() {
 
 
 // ---------------------------------------------------------------------------------------------
-// MOVE (it was DODGE). Things drop from the ceiling; tap or slide a finger anywhere to move them.
+// MOVE (Dodge in the code). Things drop from the ceiling; tap or slide a finger anywhere to move them.
 // One hit ends it. The score is how long they lasted: it speeds up until nobody can survive past ~30 s.
 // ---------------------------------------------------------------------------------------------
-static int dodgeHearts(float secs) { return secs >= 27 ? 4 : secs >= 20 ? 3 : secs >= 13 ? 2 : secs >= 6 ? 1 : 0; }
+static int dodgeHearts(float secs) { return heartsFor(secs, DODGE_HEART_AT); }
+// a Move or Run game is over: the exercise and training it earns (by hearts), the count, the best so far
+static void gameDone(Game& g, int hs, float score, float& best) {
+  g.pet.exercise(4.0f + 6.0f * hs, 0.4f + 0.3f * hs);
+  if (g.pet.d.evolving) g.pet.train(ACC_SPEED, 0.15f * hs);
+  g.sv.lifeGames++;
+  if (score > best) best = score;
+}
 // What falls: the young (playing small) get the full mix, books included; for bigger looks the drops get
 // smaller and lighter, so a wide fella still has a chance but has a harder time.
 static const uint8_t DROP_KINDS[3][4] = {
@@ -1105,7 +1110,7 @@ void Game::screenDodge() {
   Dodge& g = dg_;
   int ic;
   // only the bottom icons work here (the top ones are hidden so the whole top can steer)
-  if (g.phase < 2 && iconTapped(ic) && ic >= 4) { doIcon(ic); return; }
+  if (g.phase < 2 && iconTapped(ic) && iconSlot(ic) >= 4) { doIcon(ic); return; }
   char b[16];
   if (g.phase == 0) {
     memset(&g, 0, sizeof g);
@@ -1113,8 +1118,7 @@ void Game::screenDodge() {
   }
   g.t += dt;
   if (g.phase == 1) {
-    static const float HEART_AT[4] = {6.0f, 13.0f, 20.0f, 27.0f};
-    for (float th : HEART_AT) if (g.t >= th && g.t - dt < th) sound(SND_HEART);   // another heart earned
+    for (float th : DODGE_HEART_AT) if (g.t >= th && g.t - dt < th) sound(SND_HEART);   // another heart earned
     // steer: they run toward the finger, anywhere on the screen
     if (in.down) g.tx = (float)((in.x - MX) / DOT - w / 2);
     if (g.tx < 0) g.tx = 0;
@@ -1134,7 +1138,7 @@ void Game::screenDodge() {
           it.kind = DROP_KINDS[tier][pet.rnd() % 4];
           it.w = (uint8_t)spriteW(it.kind); it.h = (uint8_t)spriteH(it.kind);
           const bool aim = k > 0.6f && pet.rndf() < 1.5f * (k - 0.6f) / roomy;   // drop it right on top of them
-          it.x = aim ? (float)clampi((int)g.x + (int)pet.rndRange(-1, (float)w - 1), 0, MW - it.w) : (float)(int)pet.rndRange(0, MW - it.w - 0.01f);
+          it.x = aim ? (float)clampInt((int)g.x + (int)pet.rndRange(-1, (float)w - 1), 0, MW - it.w) : (float)(int)pet.rndRange(0, MW - it.w - 0.01f);
           it.v = 8.0f + 30.0f * k * k * k + pet.rndRange(0, 2);
           break;
         }
@@ -1149,11 +1153,7 @@ void Game::screenDodge() {
       if (it.y + it.h - 1 >= cy + 2 && it.y < FLOOR && it.x + it.w > cx + 1 && it.x < cx + w - 1) {   // hit: game over
         g.phase = 2; g.score = g.t; g.t = 0; g.hitX = (int)it.x; it.on = false;
         sound(SND_GRUMBLE);
-        const int hs = dodgeHearts(g.score);
-        pet.exercise(4.0f + 6.0f * hs, 0.4f + 0.3f * hs);
-        if (pet.d.evolving) pet.train(ACC_SPEED, 0.15f * hs);
-        sv.lifeGames++;
-        if (g.score > dodgeBest_) dodgeBest_ = g.score;
+        gameDone(*this, dodgeHearts(g.score), g.score, dodgeBest_);
         break;
       }
       if (it.y > FLOOR) { it.on = false; sound(SND_PLOP); }   // a miss: it thuds on the floor
@@ -1168,7 +1168,7 @@ void Game::screenDodge() {
   }
   if (g.phase == 2) {   // the hit: a moment to see it, then the score
     drawGameBlob((int)g.x, cy, g.left, 1, false);
-    m_.sprite(clampi(g.hitX, 0, MW - 3), clampi(cy - 3, 0, MH), SPR_ANGRY);
+    m_.sprite(clampInt(g.hitX, 0, MW - 3), clampInt(cy - 3, 0, MH), SPR_ANGRY);
     if (g.t > 1.0f) { g.phase = 3; g.t = 0; sound(dodgeHearts(g.score) >= 3 ? SND_WIN : SND_LOSE); }
     return;
   }
@@ -1176,8 +1176,8 @@ void Game::screenDodge() {
   m_.clear();   // (the score on a clear screen: nothing of the game behind it)
   snprintf(b, sizeof b, "%.1fS", (double)g.score);
   m_.textCenter(0, b);
-  hearts(m_, 9, dodgeHearts(g.score) * 25.0f);
-  m_.smallCenter(17, g.score >= 27 ? "PERFECT!" : g.score >= 20 ? "GREAT" : g.score >= 13 ? "GOOD" : g.score >= 6 ? "OK" : "OOPS");
+  m_.hearts(9, dodgeHearts(g.score));
+  m_.smallCenter(17, resultWord(dodgeHearts(g.score)));
   snprintf(b, sizeof b, "BEST %.1f", (double)dodgeBest_);
   m_.smallCenter(MH - 5, b, SH_MID);
   if (g.t > 0.6f && in.tap) setScreen(S_MAIN);
@@ -1187,11 +1187,12 @@ void Game::screenDodge() {
 // RUN: a side-scroller. They run on the spot, things come at them from the right, tap to jump.
 // ---------------------------------------------------------------------------------------------
 // 4 hearts = 300 m AND a double jump cleared over a tall wall
-static int runHearts(float pts, bool wall) { return pts >= 300 && wall ? 4 : pts >= 65 ? 3 : pts >= 35 ? 2 : pts >= 12 ? 1 : 0; }
+static int runHearts(float pts, bool wall) { const int n = heartsFor(pts, RUN_HEART_AT); return n == 4 && !wall ? 3 : n; }
 
 // kinds: 0 block, 1 crate, 2 spiky mat, 3 hole, 4 bird (stay low!), 5 tall pillar (needs a double jump), 6 power-up bolt
 static constexpr float RUN_GRAV = 110.0f, RUN_JUMP = 49.0f, RUN_JUMP2 = 45.0f, RUN_BOOST = 1.6f, RUN_BOOST_SECS = 5.0f;
 static constexpr int RUN_FX = 3;
+static constexpr float RUN_DOTS_PER_M = 4.0f;   // the distance counter is in dots; the score is in metres
 
 void Game::runStep(float dtReal, bool press, bool sim) {
   const int sp = gameSprite();
@@ -1223,7 +1224,7 @@ void Game::runStep(float dtReal, bool press, bool sim) {
         // out it sits (below).
         if (r.nextP <= 0) r.nextP = 2 + (int)(pet.rnd() % 8);
         if (r.t > 3 && r.boost <= 0 && ++r.sinceP >= r.nextP) { kind = 6; r.sinceP = 0; r.nextP = 2 + (int)(pet.rnd() % 8); }
-        if (!r.wallDone && r.dist / 4.0f > 120) {   // the 4th heart needs a tall wall: if none is on the way, send one
+        if (!r.wallDone && r.dist / RUN_DOTS_PER_M > 120) {   // the 4th heart needs a tall wall: if none is on the way, send one
           bool wallComing = false;
           for (int k = 0; k < 6; k++) if (r.ob[k].on && r.ob[k].kind == 5) wallComing = true;
           if (!wallComing) kind = 5;
@@ -1275,14 +1276,10 @@ void Game::runStep(float dtReal, bool press, bool sim) {
         r.cause = 0;
       }
       if (hit) {
-        r.phase = 2; r.score = r.dist / 4.0f; r.t = 0; r.hitX = (int)o.x; if (r.cause == 0) o.on = false; else r.vy = 0;
+        r.phase = 2; r.score = r.dist / RUN_DOTS_PER_M; r.t = 0; r.hitX = (int)o.x; if (r.cause == 0) o.on = false; else r.vy = 0;
         if (!sim) {
           sound(SND_GRUMBLE);
-          const int hs = runHearts(r.score, r.wallDone);
-          pet.exercise(4.0f + 6.0f * hs, 0.4f + 0.3f * hs);
-          if (pet.d.evolving) pet.train(ACC_SPEED, 0.15f * hs);
-          sv.lifeGames++;
-          if (r.score > runBest_) runBest_ = r.score;
+          gameDone(*this, runHearts(r.score, r.wallDone), r.score, runBest_);
         }
         break;
       }
@@ -1297,7 +1294,7 @@ void Game::screenRun() {
   const int w = spriteW(sp), h = spriteH(sp), cy = FLOOR - h, fx = RUN_FX;
   Run& r = rn_;
   int ic;
-  if (r.phase < 2 && iconTapped(ic) && ic >= 4) { doIcon(ic); return; }
+  if (r.phase < 2 && iconTapped(ic) && iconSlot(ic) >= 4) { doIcon(ic); return; }
   char b[16];
   if (r.phase == 0) { memset(&r, 0, sizeof r); r.next = 40; r.phase = 1; r.card = RUN_CARD_SECS; }
   if (r.card > 0) {   // the card: how to play, before anything comes at them (a tap starts the run, or it starts by itself)
@@ -1350,25 +1347,23 @@ void Game::screenRun() {
           if (o.kind == 5) for (int k = 2; k < o.h; k += 3) m_.set(ox + 1, oy + k, 0);      // a pillar
       }
     }
-    snprintf(b, sizeof b, "%d", (int)(r.dist / 4.0f));
+    snprintf(b, sizeof b, "%d", (int)(r.dist / RUN_DOTS_PER_M));
     m_.small(MW - Matrix::smallWidth(b), 0, b, SH_MID);
     if (boosted) { const int n = (int)(r.boost / RUN_BOOST_SECS * 14.0f + 0.9f); for (int k = 0; k < n; k++) m_.set(1 + k, 0, SH_INK); }
     return;
   }
   if (r.phase == 2) {
-    if (r.cause == 1) drawGameBlob(fx, cy - (int)lroundf(r.y), false, 1, false);
-    else {
-      drawGameBlob(fx, cy - (int)lroundf(r.y), false, 1, false);
-      m_.sprite(clampi(fx + w - 2, 0, MW - 3), clampi(cy - 3, 0, MH), SPR_ANGRY);
-    }
+    drawGameBlob(fx, cy - (int)lroundf(r.y), false, 1, false);
+    if (r.cause != 1) m_.sprite(clampInt(fx + w - 2, 0, MW - 3), clampInt(cy - 3, 0, MH), SPR_ANGRY);   // (a hole has no culprit)
     if (r.t > 1.0f) { r.phase = 3; r.t = 0; sound(runHearts(r.score, r.wallDone) >= 3 ? SND_WIN : SND_LOSE); }
     return;
   }
   m_.clear();
   snprintf(b, sizeof b, "%dM", (int)r.score);
   m_.textCenter(0, b);
-  hearts(m_, 9, runHearts(r.score, r.wallDone) * 25.0f);
-  m_.smallCenter(17, runHearts(r.score, r.wallDone) >= 4 ? "PERFECT!" : r.score >= 65 ? "GREAT" : r.score >= 35 ? "GOOD" : r.score >= 12 ? "OK" : "OOPS");
+  const int hs = runHearts(r.score, r.wallDone);
+  m_.hearts(9, hs);
+  m_.smallCenter(17, resultWord(hs));
   snprintf(b, sizeof b, "BEST %d", (int)runBest_);
   m_.smallCenter(MH - 5, b, SH_MID);
   if (r.t > 0.6f && in.tap) setScreen(S_MAIN);
@@ -1380,7 +1375,7 @@ void Game::screenRun() {
 // Spiky planets never sit in the same slot on both orbits and always leave time to hop, so nothing is unavoidable.
 // (o.stars counts the planets eaten, o.hits the tummy aches.)
 // ---------------------------------------------------------------------------------------------
-static int orbitHearts(int stars) { return stars >= 26 ? 4 : stars >= 18 ? 3 : stars >= 11 ? 2 : stars >= 5 ? 1 : 0; }
+static int orbitHearts(int stars) { return heartsFor(stars, ORBIT_HEART_AT); }
 static constexpr float ORB_SLOT = 0.5236f;   // 30 degrees
 static constexpr int ORB_CX = 19, ORB_CY = 14;
 static constexpr float ORB_RX[2] = {12.0f, 17.0f}, ORB_RY[2] = {6.0f, 10.0f};   // (room for the chomper at its fattest)
@@ -1439,24 +1434,21 @@ void Game::orbitStep(float dtReal, bool tap, bool sim) {
 void Game::screenOrbit() {
   Orbit& o = orb_;
   int ic;
-  if (o.phase < 3 && iconTapped(ic) && ic >= 4) { doIcon(ic); return; }
+  if (o.phase < 3 && iconTapped(ic) && iconSlot(ic) >= 4) { doIcon(ic); return; }
   char b[16];
-  if (o.phase == 0) { memset(&o, 0, sizeof o); o.phase = 1; o.lastAst = -9; o.slot = -1; o.th = -1.0f; }
-  if (o.phase == 3) o.t += dt;   // the result screen's own clock (it used to stand still, so a tap couldn't leave it)
+  if (o.phase == 0) { memset(&o, 0, sizeof o); o.phase = 1; o.lastAst = -9; o.slot = -1; o.th = -1.0f; }   // (th < 0: the first star is a moment away)
+  if (o.phase == 3) o.t += dt;   // the result screen's own clock
   // a little starfield behind
   for (int i = 0; i < 14; i++) {
     const int x = (i * 17 + 5) % MW, y = (i * 11 + 3) % MH;
     if (((int)(scrT_ * 1.5f) + i) % 5) continue;
     m_.set(x, y, SH_MID);
   }
-  if (o.phase == 1) {
-    // first the sky is empty for a moment so the first star isn't a surprise
-    orbitStep(dt, in.pressed, false);
-  }
+  if (o.phase == 1) orbitStep(dt, in.pressed, false);
   if (o.phase == 1 || o.phase == 3) {
     // the two orbits, dotted
     for (int l = 0; l < 2; l++) for (int k = 0; k < 30; k++) {
-      const float a = k * 6.2832f / 30;
+      const float a = k * TAU_F / 30;
       m_.set(ORB_CX + (int)lroundf(cosf(a) * ORB_RX[l]), ORB_CY + (int)lroundf(sinf(a) * ORB_RY[l]), SH_MID);
     }
   }
@@ -1508,15 +1500,15 @@ void Game::screenOrbit() {
         const float fx = (float)(int)lroundf(cx) + dx - cx, fy = (float)(int)lroundf(cy) + dy - cy, d2 = fx * fx + fy * fy;
         if (d2 >= (r + 0.5f) * (r + 0.5f)) continue;
         float rel = atan2f(fy, fx) - face;
-        while (rel > 3.14159f) rel -= 6.28318f;
-        while (rel < -3.14159f) rel += 6.28318f;
+        while (rel > PI_F) rel -= TAU_F;
+        while (rel < -PI_F) rel += TAU_F;
         if (mouth > 0 && fabsf(rel) < mouth && d2 > 0.6f) continue;                 // the open mouth
         m_.set((int)lroundf(cx) + dx, (int)lroundf(cy) + dy, d2 >= (r - 0.5f) * (r - 0.5f) ? SH_INK : sick ? SH_MID : 0);   // (green-grey inside with a tummy ache)
       }
-      // the eye: above the middle, a little forward; a tummy ache screws it shut
-      // (placed on the side away from the mouth's top jaw so the open mouth never swallows it)
+      // the eye: a little forward and a quarter turn back from the mouth, so the open mouth never swallows it;
+      // a tummy ache screws it shut
       const float ux = cosf(face), uy = sinf(face);
-      const float ex0 = cx + ux * r * 0.15f + uy * r * 0.55f, ey0 = cy + uy * r * 0.15f - ux * r * 0.55f;   // a quarter turn back from the mouth
+      const float ex0 = cx + ux * r * 0.15f + uy * r * 0.55f, ey0 = cy + uy * r * 0.15f - ux * r * 0.55f;
       const int ex = (int)lroundf(ex0), ey = (int)lroundf(ey0);
       m_.set(ex, ey, SH_INK);
       if (sick) { m_.set(ex - 1, ey - 1, SH_INK); m_.set(ex + 1, ey + 1, SH_INK); m_.set(ex + 1, ey - 1, SH_INK); m_.set(ex - 1, ey + 1, SH_INK); }   // x_x
@@ -1537,9 +1529,10 @@ void Game::screenOrbit() {
   m_.clear();
   snprintf(b, sizeof b, "%d", o.stars);
   m_.textCenter(0, b);
-  hearts(m_, 9, orbitHearts(o.stars) * 25.0f);
-  m_.smallCenter(17, o.stars >= 26 ? "PERFECT!" : o.stars >= 18 ? "GREAT" : o.stars >= 11 ? "GOOD" : o.stars >= 5 ? "OK" : "OOPS");
-  const bool snack = orbitHearts(o.stars) >= 3 && eatRoutine() != 0;   // a good round earns a snack
+  const int hs = orbitHearts(o.stars);
+  m_.hearts(9, hs);
+  m_.smallCenter(17, resultWord(hs));
+  const bool snack = hs >= 3 && eatRoutine() != 0;   // a good round earns a snack
   snprintf(b, sizeof b, "BEST %d", orbitBest_);
   m_.smallCenter(MH - 5, snack && ((int)(o.t * 1.5f) & 1) ? "SNACK!" : b, SH_MID);
   if (o.t > 0.6f && in.tap) {
@@ -1557,8 +1550,7 @@ void Game::screenEvolve() {
   const int n = evoCount(stage);
   if (evoSel_ < 0 || evoSel_ >= n) evoSel_ = 0;
   const EvoChoice& opt = evoOption(stage, evoSel_);
-  int idle, alt, sl;
-  blobSprite(opt.form == F_COUNT ? lilFellaForm() : opt.form, idle, alt, sl);   // (F_COUNT: turning Big Blorbus down)
+  const int idle = lookSprite(opt.form == F_COUNT ? lilFellaForm() : opt.form);   // (F_COUNT: turning Big Blorbus down)
   const int w = spriteW(idle), h = spriteH(idle);
   m_.smallCenter(2, opt.name);   // ("Pick new form:" is written above the LCD, where the top icons usually are)
   const bool bob = ((int)(scrT_ * 2)) & 1;
@@ -1568,12 +1560,12 @@ void Game::screenEvolve() {
   int dx, dy;
   if (scrT_ < 0.5f) return;   // a moment to see it before a tap counts
   if (!in.tap || !inMatrix(in.px, in.py, dx, dy)) return;
-  if (dx < 12) { evoSel_ = (evoSel_ + n - 1) % n; sound(SND_PAGE); return; }   // left / right thirds flip, middle picks
+  if (dx < 12) { evoSel_ = (evoSel_ + n - 1) % n; sound(SND_PAGE); return; }   // the 12-dot strips at the left / right edges flip, the middle picks
   if (dx >= MW - 12) { evoSel_ = (evoSel_ + 1) % n; sound(SND_PAGE); return; }
   // pick this one
   evoSetChoice(stage, stage == 4 ? (evoSel_ == 0 ? 1 : 7) : evoSel_ + 1);
   lastForm_ = form();
-  { int i2, a2, s2; blobSprite(form(), i2, a2, s2); blobX_ = blobTx_ = (float)((MW - spriteW(i2)) / 2); }
+  blobX_ = blobTx_ = (float)((MW - spriteW(lookSprite(form()))) / 2);
   sound(SND_WIN);
   autosave(true);
   startAnim(AN_GROW, 2.0f);
@@ -1586,8 +1578,7 @@ void Game::screenEnding() {
   // Every life ends the same way: they melt into a puddle of goo and the dropper comes down over it. Then it's up to
   // you: squeeze the bulb and let go, three times, to suck the puddle up. The dropper rises and the name page opens;
   // "Let's goo!" leads to the opening scene, where one tap squeezes out the new blob.
-  int idle, alt, sl;
-  blobSprite(form(), idle, alt, sl);
+  const int idle = lookSprite(form());
   const int w = spriteW(idle), h = spriteH(idle), cy = FLOOR - h;
   const float t = scrT_;
   const bool recycled = anArg_ == END_RECYCLED;
@@ -1620,13 +1611,13 @@ void Game::screenEnding() {
     m_.rect(0, 0, MW, cy + (int)(k * h), 0);                               // the top sinks away
     for (int i = 0; i < 3 && k > 0.1f; i++) {                              // drips down the sides
       const int dyy = cy + (int)(k * h) + (int)(fmodf(t * 6 + i * 2.3f, 6.0f));
-      m_.set(i == 1 ? cx + w : cx - 1, clampi(dyy, 0, FLOOR), SH_MID);
+      m_.set(i == 1 ? cx + w : cx - 1, clampInt(dyy, 0, FLOOR), SH_MID);
     }
     if (recycled && k < 0.9f) for (int i = 0; i < 2; i++) {               // a recycled fella goes out sparkling
       const int sy = cy + (int)(k * h) - 3 - (int)(fmodf(t * 5 + i * 2.5f, 5.0f));
       if (sy > 5) m_.sprite(i ? cx + w - 2 : cx - 2, sy, SPR_SPARK);
     }
-    if (anArg_ == END_SICK && t < T_MELT && ((int)(t * 4) & 1)) m_.sprite(clampi(cx + w, 0, MW - 7), clampi(cy - 2, 0, MH), SPR_SKULL);
+    if (anArg_ == END_SICK && t < T_MELT && ((int)(t * 4) & 1)) m_.sprite(clampInt(cx + w, 0, MW - 7), clampInt(cy - 2, 0, MH), SPR_SKULL);
     pool = (int)(k * full);
     const char* why = anArg_ == END_DISSOLVED ? "OVERFED" : anArg_ == END_SICK ? "TOO SICK" : anArg_ == END_SAD ? "TOO SAD"
                     : anArg_ == END_RAN_AWAY ? "NO TRUST" : "THANK YOU";
@@ -1643,7 +1634,8 @@ void Game::screenEnding() {
     if (pool > 2) m_.rect(MW / 2 - pool + 2, FLOOR - 1, pool * 2 - 4, 1, SH_MID);
   }
   if (t >= T_POOL) {
-    int y = lowY, x = dx0, spr = SPR_DROPPER;
+    const int x = dx0;
+    int y = lowY, spr = SPR_DROPPER;
     if (t < ENDING_WAIT_AT) y = -dh + (int)((t - T_POOL) / (ENDING_WAIT_AT - T_POOL) * (lowY + dh));   // coming down
     else if (s < 0) {                                                      // waiting for your squeezes
       if (squeezing_) spr = SPR_DROPPER_SQ;
@@ -1667,18 +1659,18 @@ void Game::debugAct(int which) {
   if (!sv.hasBlob) return;
   if (scr == S_ANIM && an_ == AN_MEDS && anT_ < anLen_) return;   // (not even the web page's buttons cut the medicine short)
   switch (which) {
-    case 0: case 1: { bool o; pet.d.hunger = 30; pet.feed(which ? FOOD_TREAT : FOOD_KIBBLE, o); startAnim(which ? AN_EAT_SNACK : AN_EAT_MEAL, eatSecs()); break; }
+    case -1: setScreen(S_MAIN); break;
+    case 0: case 1: { bool o = false; pet.d.hunger = 30; pet.feed(which ? FOOD_TREAT : FOOD_KIBBLE, o); startAnim(which ? AN_EAT_SNACK : AN_EAT_MEAL, eatSecs()); break; }
     case 2: startScrub(); break;
-    case 13: startPop(); break;
-    case 14: startYeet(); break;
     case 3: if (an_ != AN_MEDS) { pet.vetVisit(); startAnim(AN_MEDS, MEDS_SECS, pet.sickStack()); } break;
     case 5: memset(&dg_, 0, sizeof dg_); setScreen(S_DODGE); break;
-    case 11: memset(&rn_, 0, sizeof rn_); setScreen(S_RUN); break;
-    case 12: memset(&orb_, 0, sizeof orb_); setScreen(S_ORBIT); break;
     case 6: meterPage_ = 0; setScreen(S_METER); break;
     case 7: setFrom_ = S_MAIN; setPage_ = 0; setScreen(S_SETTINGS); break;
     case 8: if (pet.d.age < DROP_AGE) squeezeOut(); break;   // squeeze the dropper
-    case -1: setScreen(S_MAIN); break;
+    case 11: memset(&rn_, 0, sizeof rn_); setScreen(S_RUN); break;
+    case 12: memset(&orb_, 0, sizeof orb_); setScreen(S_ORBIT); break;
+    case 13: startPop(); break;
+    case 14: startYeet(); break;
     default: break;
   }
 }

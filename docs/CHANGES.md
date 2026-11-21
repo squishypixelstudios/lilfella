@@ -1,5 +1,20 @@
 # Lil Fella: changes
 
+## Unreleased: code review clean-up (not yet run on a device; the simulator and web build were not re-run)
+- **Fixed:** while playing MOVE, RUN or ORBIT, the hidden top-right icon column started the litter scrub and the visible Medicine icon did nothing. The games now check the icon's slot, not its id.
+- **Fixed:** Nimbus's eyes now stay shut for the whole last blink of its meal; Puff, Nimbus and Mochi trails in YEET no longer fall like feathers (feathers have their own trail type); the Meter page dots are centred and turning the page by its icon restarts the 20 s timeout; the set-clock arrows click only when the finger lands, not on the first auto-repeat; the Erase page no longer mentions bubbles.
+- **Removed:** unused code (`giftValue`, `EV_UNUSED`, the touch-release debounce option, four training-era sprites, unused YEET fields, duplicate helpers), and `-Wno-unused-variable` so the compiler tells you about unused variables again.
+- **Developer option:** Settings page 3 has a "Big look" row. Each tap jumps the fella to the next of the three Big Blorbus looks (Big Blob, Big Ball, Alien Cat), wherever they are in life: it ages them to 8 days, skips the lessons and replaces the looks picked so far with a path that leads there. (Remove it with the Speed option before release.)
+- **Tidied:** stale and rambling comments; shared `PI_F`, `clampInt`, `Matrix::hearts`; one list of source files (`sim/sources.txt`) for the simulator and web builds; the web page takes its version from `LF_VERSION`; the touch coordinate log is off by default (`LF_TOUCH_LOG 1` turns it on); ES8311 driver docs and return-value checks.
+
+## v1.0.2 Alien Cat for Dapper, Jelly faces the right way (2026-11-20)
+- **The Alien Cat in a Tuxedo is for Dapper now, not Loaf.** Big Blorbus's Alien Cat is offered at 8 days to Nimbus and Dapper (it was Nimbus and Loaf). A Loaf gets no Big Blorbus any more. A Loaf that had already become an Alien Cat stays one. Dapper has no other Big Blorbus to choose from, so it's offered the Alien Cat from every line it can be reached through.
+- **Title parade: Jelly now faces the way it walks.** Jelly is drawn looking right, while the rest look left or straight at you, so in the near row (which walks left) it was walking backwards. It's turned round in both rows (the far row walks right, and is flipped), so everyone's face points where they are going. Only the title page is affected.
+- `./sim titleshots <dir>` writes a frame every 2 s over one 20 s loop of the title page.
+- **`./sim endings` is up to date** with the shorter goodbye. It was still pressing and holding for the old shake-and-tap ending, and its held finger (4 s) ran into the new long-press-opens-Settings rule. It now holds for 1 s just as the name page is due, which still checks that the name page waits for a finger to lift.
+- The web page (`web/lil-fella.html`) is rebuilt from this code (it was still the v0.10 build).
+- The ready-built images in `firmware/` are v1.0.2 (built for all three boards: amoled216, amoled18, lcd183).
+
 ## v1.0.1 shorter goodbye, half volume, battery savings (2026-11-20)
 - **A shorter goodbye:** when a fella dies you still squeeze the dropper three times to suck the puddle up, but the shaking and the extra tap are gone. The dropper rises and the name page opens by itself; "Let's goo!" goes to the opening scene, where one tap squeezes out the new blob.
 - **Every sound setting is half as loud.** It was too loud all the way up. Sound is still 0-5 and 5 is still MAX; each of 1-5 is now 50% of its old level, so the speaker draws about a quarter of the power at every setting.

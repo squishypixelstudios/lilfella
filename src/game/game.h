@@ -1,9 +1,13 @@
 // Lil Fella: a classic 2-bit virtual pet, driven by Game::frame() ~30 times a second.
 // The fella's needs, ageing, moods and endings live in pet.cpp;
 // this layer is the classic presentation: a 40x28 dot-matrix LCD with 8 icons, all in 4 shades.
-//   game.cpp    loop, clock, power, events, care rules, save
-//   view.cpp    the dot-matrix scenes, icons, animations, mini-games (POP, the bubble shooter, is in pop.cpp)
-//   pages.cpp   full-screen pages: first-time setup, settings, confirm
+//   game.cpp    loop, clock, power, events, care rules, evolution tree, save
+//   view.cpp    the dot-matrix scenes, icons, animations, the MOVE (Dodge) / RUN / ORBIT games, the ending
+//   eatfx.cpp   the eating animations, one routine per look
+//   pop.cpp     POP, the bubble shooter
+//   yeet.cpp    YEET, the sling game, and the scrub (Clean)
+//   pages.cpp   full-screen pages: setup, title, settings, friends, journal, about, confirm
+//   synth.cpp   the sound effects (platform.h lists them)
 #pragma once
 #include "platform.h"
 #include "lcd.h"
@@ -12,7 +16,7 @@
 
 namespace lf {
 
-constexpr const char* LF_VERSION = "1.0.1";   // shown in Settings and the boot log
+constexpr const char* LF_VERSION = "1.0.2";   // shown in Settings and the boot log
 
 // ---- touch (defaults; tweak here when re-testing on the device) ----
 // Screen scale: ~12.7 physical px per mm, so 1 logical px = ~0.16 mm and one LCD dot (4 px) = ~0.63 mm. A fingertip
@@ -41,7 +45,7 @@ constexpr float ENDING_WAIT_AT = 4.6f;  // an ending: they melt, and the dropper
 constexpr int ENDING_PULLS = 3;       // an ending: squeezes needed to suck the puddle up
 constexpr float ENDING_UP_AT = 3.0f;   // seconds after the last squeeze when the dropper is back up top: the name page opens
 constexpr float EAT_SECS = 2.6f;        // eating: bites (Lil Blunkus and Lil Fella)
-constexpr float ABSORB_SECS = 6.0f;     // eating: walk over, stretch round the food, zoom in on it dissolving (Lil Blob, Lil Blub)
+constexpr float ABSORB_SECS = 6.0f;     // eating: walk over, stretch round the food, it dissolves (Lil Blob, Lil Blub)
 constexpr float GAME_IDLE_SECS = 30.0f; // a game (or the scrub) left untouched this long goes back to the home screen
 constexpr float RUN_CARD_SECS = 4.0f;    // RUN: the how-to card (tap = jump, tap again = double jump) goes on its own after this long, or at a tap
 // ---- POP: the bubble shooter (pop.cpp) ----
@@ -63,7 +67,7 @@ constexpr int BOX_X = 29;               // left dot column of the litter box (fl
 constexpr int BOX_W = 11;               // the box: on screen only while there's poop in it waiting to be cleaned
 
 // ---- icons: 4 on top, 4 at the bottom, like the original ----
-enum IconId : uint8_t { IC_FEED, IC_LIGHT, IC_PLAY, IC_MEDS, IC_LITTER, IC_METER, IC_LOCK, IC_CALL, IC_COUNT };   // (IC_LOCK took the training icon's place)
+enum IconId : uint8_t { IC_FEED, IC_LIGHT, IC_PLAY, IC_MEDS, IC_LITTER, IC_METER, IC_LOCK, IC_CALL, IC_COUNT };
 constexpr int ICON_TOP_Y = 20, ICON_BOT_Y = 188;   // top-left y of the 16x16 icons
 constexpr int ICON_X[4] = {28, 65, 103, 140};      // icon left x (kept clear of the rounded screen corners)
 // Where each icon sits: slots 0-3 along the top, 4-7 along the bottom. (Icon ids stay fixed: the first-hour
@@ -142,6 +146,7 @@ class Game {
   bool seenLook(int f) const { return f == F_BABY || (sv.journal >> f & 1u); }   // (Lil Blob: everyone starts as one)
   int journalCount(int stage, int* total) const;   // looks raised in a stage (0 Lil Blob .. 4 Big Blorbus; -1 all), total = how many there are
   void debugAct(int which);   // tests / web page: 0 feed meal, 1 snack, 2 clean, 3 meds, 5 dodge, 6 meter, 7 settings, 8 squeeze the dropper now
+  void debugJumpBig();        // developer option (Settings page 3): jump to the next of the three Big Blorbus looks
 
  private:
   struct In {
@@ -248,7 +253,6 @@ private:
   void markIcon(int ic) { if (pet.d.pad2 & 0x8000) pet.d.pad2 |= (uint16_t)(1u << ic); }
   void lessonTick();
 
-
 public:
   // POP (Play menu): a bubble shooter after Puzzle Bobble. Aim, fire, match three of a kind (pop.cpp).
   struct Pop {
@@ -281,9 +285,8 @@ private:
   Screen gameScr_ = S_MAIN;
 
 public:
-  // Clean (soap icon): scrub the mess away - rub a finger back and forth, the suds build up, it wipes clean
-  // Every poop is different: its shape, where it lies, and how stuck-on it is (tough 1-5: up to twice the rubbing).
-  // Every poop since the last clean is in it, and each is more to scrub.
+  // Clean (soap icon): scrub the mess away. Rub a finger back and forth; suds build up and every poop since the last
+  // clean (each its own shape, spot and toughness 1-5: up to twice the rubbing) wears away. Details: yeet.cpp.
   struct Scrub {
     float t, prog, need, base, doneT; int lx, ly, box, floor, ns, np; bool had, done;
     struct { int8_t x, y; uint8_t k; float born; } suds[48];   // born: S.t when it was made (they fade after SUDS_SECS)
@@ -293,15 +296,17 @@ public:
   void screenScrub();
 public:
   // YEET: pull the fella back in the sling and let go; whatever is out past the edge bounces them around
+  static constexpr int YEET_OBS = 10;     // things out past the edge at once
+  static constexpr int YEET_PARTS = 16;   // trail particles at once
   struct YeetOb { float x, y; uint8_t kind; bool on; float t; };
   struct Yeet {
     int phase;               // 0 the card (how to + best), 1 aiming, 2 flying, 3 landed, 4 result
-    float t, x, y, vx, vy, camX, camY, rest, spin, pullX, pullY, ax0, ay0, maxX, hitT, squash, landT, gustT;
+    float t, x, y, vx, vy, camX, camY, rest, spin, pullX, pullY, hitT, squash, landT, gustT;
     int rot, meters, lastHit, hearts, drawBot, gyScr;
     bool aiming, onGround, best, inMud, splatDone;
     float nextOb;
-    YeetOb ob[10];
-    struct { float x, y, vx, vy, life; uint8_t k; } pt[16];
+    YeetOb ob[YEET_OBS];
+    struct { float x, y, vx, vy, life; uint8_t k; } pt[YEET_PARTS];   // k: a Trail (yeet.cpp)
   } yt_{};
   void yeetLaunch(float pullX, float pullY);          // let go with the band pulled back this far (dots; tests)
   void yeetStep(float dtReal);                         // one tick of the flight
@@ -320,9 +325,9 @@ private:
   friend struct Reporter;   // sim: scripted playthroughs for the balance report
   friend struct TouchMap;   // sim: where every touch lands
   friend struct JournalTest;   // sim: the Journal
-  friend struct NewTests;      // sim: v0.07 (sickness, scrub, POOP UP, YEET)
+  friend struct NewTests;      // sim: sickness, scrub, POOP UP, YEET
   friend struct NewShots;
-  friend struct V010;          // sim: v0.10 (POP, scrub resume, RUN card, wiki pictures)
+  friend struct V010;          // sim: POP, scrub resume, RUN card, wiki pictures
 
   // ---- game.cpp ----
   void updateInput(bool down, int x, int y);
@@ -402,8 +407,6 @@ private:
   void drawGameBlob(int x, int y, bool flip, int mode, bool alt);
 public:
   const char* lifeStageName() const;
-private:
-public:
   static const char* lookName(int form);   // "Lil Blob", "Mochi", ...
 private:
   int lookSprite(int form) const;          // a look's standing sprite

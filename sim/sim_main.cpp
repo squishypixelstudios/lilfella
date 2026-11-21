@@ -358,7 +358,7 @@ static int cmdFlows() {
   tap(g, p, 50, 124); expect(S_SETTINGS, "erase everything no");
   if (!g.sv.hasBlob) { printf("FAIL erase NO still erased\n"); bad++; }
   { const bool t0 = g.showTouch; tap(g, p, 92, SETTINGS_Y0 + 2 * SETTINGS_STEP + 12); if (g.showTouch == t0) { printf("FAIL touch row (page 3)\n"); bad++; } tap(g, p, 92, SETTINGS_Y0 + 2 * SETTINGS_STEP + 12); }
-  tap(g, p, 92, SETTINGS_Y0 + 4 * SETTINGS_STEP + 12); expect(S_SETTINGS, "page 3 back");
+  tap(g, p, 92, SETTINGS_Y0 + 5 * SETTINGS_STEP + 12); expect(S_SETTINGS, "page 3 back");
   tap(g, p, 92, SETTINGS_Y0 + 5 * SETTINGS_STEP + 12); expect(S_SETTINGS, "page 2 back");
   tap(g, p, 92, SETTINGS_Y0 + 5 * SETTINGS_STEP + 12); expect(S_MAIN, "back");
   // the screen: left untouched it goes off (Auto off); a tap or the button turns it on
@@ -945,7 +945,17 @@ static int cmdBlorbus() {
   check(distinct == 3, "all three Big Blorbus are reachable");
   d.pad0[0] = Game::packLooks(1, 4, 3);   // Blobbert > Slosh > Ballboi: no Big Ballboi on that line
   check(Game::bigOf(F_AD_JELLY, 2) == F_COUNT && Game::bigOf(F_AD_PUFF, 3) == F_COUNT && Game::bigOf(F_AD_PUFF, 1) == F_BB_BLOBBERT, "Big Blobbert is for the Blobbert line only");
+  check(Game::bigOf(F_AD_NIMBUS, 1) == F_BB_ALIEN && Game::bigOf(F_S1C, 1) == F_BB_ALIEN && Game::bigOf(F_S1C, 3) == F_BB_ALIEN && Game::bigOf(F_AD_LOAF, 1) == F_COUNT, "the Alien Cat is for Nimbus and Dapper, no longer Loaf");
   check(g.evoOption(3, 2).form == F_AD_BALLBOI && Game::bigOf(F_AD_BALLBOI, 1) == F_COUNT && Game::bigOf(F_AD_BALLBOI, 3) == F_BB_BALLBOI, "Big Ballboi is for the Cheeks line only");
+  { // a Loaf: no Big Blorbus offered any more; one that already took the Alien Cat keeps it
+    d.pad0[0] = Game::packLooks(2, 2, 1); d.age = AGE_BLORBUS + 100; d.pad1[1] &= ~(7 << 2);
+    check(g.lilFellaForm() == F_AD_LOAF && g.pendingEvolution() == 0, "Loaf is not offered the Alien Cat now");
+    d.pad1[1] |= (1 << 2);
+    check(g.form() == F_BB_ALIEN, "a Loaf that already took the Alien Cat stays one");
+    d.pad1[1] &= ~(7 << 2);
+    d.pad0[0] = Game::packLooks(3, 1, 1); d.age = AGE_BLORBUS + 100;   // Cheeks > Bean > Dapper
+    check(g.lilFellaForm() == F_S1C && g.pendingEvolution() == 4 && g.evoOption(4, 0).form == F_BB_ALIEN, "Dapper is offered the Alien Cat");
+  }
   return fails ? (printf("blorbus: %d FAILED\n", fails), 1) : (printf("blorbus: all ok\n"), 0);
 }
 
@@ -1067,7 +1077,9 @@ static int cmdEndings() {
     if (g.scr != S_ENDING) fail("two squeezes aren't enough");
     for (int k = 0; k < 4; k++) step(g, p, true, MX + 80, MY + 50); step(g, p); run(g, p, 1.0f);   // the third
     // a finger back on the glass while the dropper rises: the name page waits for it to lift, and that press types nothing
-    for (int k = 0; k < 30 * 4; k++) step(g, p, true, MX + 80, MY + 50);
+    // (put down just before it is due and held for 1 s: any longer is a long press, which opens Settings instead)
+    run(g, p, ENDING_UP_AT - 1.0f - 0.4f);
+    for (int k = 0; k < 30; k++) step(g, p, true, MX + 80, MY + 50);
     if (g.scr != S_ENDING) fail("the name page opened under a held finger");
     step(g, p);
     if (g.scr != S_SETUP_NAME) fail("name page after the third squeeze");
@@ -1270,7 +1282,7 @@ int lf::JournalTest::all() {
 
 
 // ---------------------------------------------------------------------------------------------
-// v0.07: sickness, the 30 s game timeout, the scrub, YEET
+// sickness, the 30 s game timeout, the scrub, YEET
 // ---------------------------------------------------------------------------------------------
 namespace lf {
 static constexpr int FLOOR_ROW = MH - 1;
@@ -1793,8 +1805,19 @@ int lf::NewShots::run_(const char* dir) {
   return 0;
 }
 
+// the title page's parade, a frame every 2 s over one 20 s loop (a look at who faces which way)
+static int cmdTitleShots(const char* dir) {
+  outDir = dir;
+  SimPlat p; Game g(&p); g.begin();
+  run(g, p, 0.3f); tap(g, p, 92, 195);   // the clock's OK
+  run(g, p, 0.05f);
+  for (int i = 0; i < 10; i++) { char nm[24]; snprintf(nm, sizeof nm, "title_t%02d", i * 2); shot(g, nm); run(g, p, 2.0f); }
+  return 0;
+}
+
 int main(int argc, char** argv) {
   if (argc >= 3 && !strcmp(argv[1], "newshots")) return cmdNewShots(argv[2]);
+  if (argc >= 3 && !strcmp(argv[1], "titleshots")) return cmdTitleShots(argv[2]);
   if (argc >= 3 && !strcmp(argv[1], "babyeat")) return lf::V010::babyEat(argv[2]);
   if (argc >= 3 && !strcmp(argv[1], "popshots")) return lf::V010::popShots(argv[2]);
   if (argc >= 2 && !strcmp(argv[1], "v010")) return lf::V010::checks();

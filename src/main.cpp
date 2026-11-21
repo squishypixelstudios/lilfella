@@ -1,4 +1,4 @@
-// Lil Fella - firmware entry point (Waveshare ESP32-S3-Touch-AMOLED-2.16 and -1.8; hal/board.h says which).
+// Lil Fella - firmware entry point (the three Waveshare boards in platformio.ini; hal/board.h says which).
 #include <Arduino.h>
 #include "hal/hal.h"
 #include "game/game.h"

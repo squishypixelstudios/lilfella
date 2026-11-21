@@ -24,7 +24,7 @@ struct SaveData {
   uint8_t clockSet;        // user confirmed the clock
   uint8_t hallCount;       // entries in hall[] (the Old friends log)
   uint8_t reserved1[4];
-  uint32_t unused0;        // (was the bubbles currency, removed in v0.07)
+  uint32_t unused0;        // reserved (was the bubbles currency)
   uint8_t reserved2[5];
   uint8_t hasBlob;         // 0 until the dropper is filled (a name picked)
   uint8_t reserved3[22];
@@ -34,7 +34,7 @@ struct SaveData {
   uint32_t lastSeen;       // epoch seconds (local) at last save
   uint32_t fallbackClock;  // used if the RTC is unavailable
 
-  uint32_t lifeFed, lifeGames, lifeBubbles, lifeGifts, lifeBlobs;   // lifetime counts
+  uint32_t lifeFed, lifeGames, lifeUnused, lifeGifts, lifeBlobs;   // lifetime counts (lifeUnused: reserved, was a bubbles count)
 
   HallEntry hall[HALL_MAX];   // the Old friends log, newest first
   PetData pet;
@@ -45,7 +45,7 @@ struct SaveData {
   uint8_t reserved5[24];
 };
 constexpr uint8_t FIX_SICK = 1;   // v0.07: sickness reworked, bubbles gone
-constexpr uint8_t FIX_LOCK = 2;   // v0.08: training gone; its save byte (pad0[1]) is the LOCK now
+constexpr uint8_t FIX_LOCK = 2;   // v0.08: training gone; its save byte (PetData::pad0[1]) is the LOCK now
 constexpr uint8_t FIX_AUTOOFF = 4;   // v1.0.1: Auto off no longer waits for the device to lie flat; the old default (5 Sec) becomes 30 Sec
 static_assert(offsetof(SaveData, mode) == 12 && offsetof(SaveData, clockSet) == 18 && offsetof(SaveData, unused0) == 24 &&
               offsetof(SaveData, hasBlob) == 33 && offsetof(SaveData, eq) == 56 && offsetof(SaveData, lastSeen) == 68 &&

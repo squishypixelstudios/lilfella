@@ -2,6 +2,7 @@
 // JavaScript's rounding (floor(x + 0.5)) throughout, so every frame matches the approved previews.
 #include "eatfx.h"
 #include "sprites.h"
+#include "lcd.h"
 #include <math.h>
 #include <string.h>
 #include <initializer_list>
@@ -12,6 +13,7 @@ namespace {
 
 typedef double D;
 constexpr int EW = 40, EH = 28;
+static_assert(EW == MW && EH == MH, "the eating scenes are drawn on the matrix-sized frame");
 constexpr D PI = 3.141592653589793;
 
 uint8_t* B = nullptr;   // the 40x28 frame being drawn
@@ -63,15 +65,13 @@ inline char at(const Spr& s, int r, int c) {
 
 // drawing options (the lab's `o` object)
 struct PO {
-  bool flip = false, shut = false, mid = false, dark = false, noE = false, onlyE = false, noG = false;
-  int rmin = -1, rmax = -1, cmin = -1, cmax = -1;
+  bool shut = false, mid = false, dark = false, noE = false, onlyE = false;
+  int rmin = -1, rmax = -1;
   int dxk = 0; D a = 0, b = 0, c = 0;   // per-row offset: 1 = round(sin(a + r*b) * c) (Jelly), 2 = round((5 - r) * a * 0.2) (Bean)
-  PO& Fl(bool v) { flip = v; return *this; }
   PO& S(bool v) { shut = v; return *this; }
   PO& Mi(bool v) { mid = v; return *this; }
   PO& Dk(bool v) { dark = v; return *this; }
   PO& R(int a_, int b_) { rmin = a_; rmax = b_; return *this; }
-  PO& C(int a_, int b_) { cmin = a_; cmax = b_; return *this; }
   PO& NoE() { noE = true; return *this; }
   PO& OnlyE() { onlyE = true; return *this; }
 };
@@ -86,9 +86,7 @@ void put(int id, D x, D y, const PO& o = PO()) {
   for (int r = 0; r < s.h; r++) {
     if (o.rmin >= 0 && (r < o.rmin || r > o.rmax)) continue;
     for (int c = 0; c < s.w; c++) {
-      if (o.cmin >= 0 && (c < o.cmin || c > o.cmax)) continue;
-      const char ch = at(s, r, o.flip ? s.w - 1 - c : c);
-      if (o.noG && ch == 'G') continue;
+      const char ch = at(s, r, c);
       if (o.noE && ch == 'E') continue;
       if (o.onlyE && ch != 'E') continue;
       int v = ch == 'X' || ch == 'M' ? 3 : ch == 'E' ? (o.shut ? 0 : 3) : ch == 'G' ? 2 : 0;
@@ -104,8 +102,7 @@ void warp(int id, D x, D y, D w, D h, const PO& o = PO()) {
   w = mx(1, jr(w)); h = mx(1, jr(h));
   const Spr s = sp(id);
   for (D dy = 0; dy < h; dy++) for (D dx = 0; dx < w; dx++) {
-    const D m = o.flip ? w - 1 - dx : dx;
-    const D sx = w > 1 ? jr(m * (s.w - 1) / (w - 1)) : 0, sy = h > 1 ? jr(dy * (s.h - 1) / (h - 1)) : 0;
+    const D sx = w > 1 ? jr(dx * (s.w - 1) / (w - 1)) : 0, sy = h > 1 ? jr(dy * (s.h - 1) / (h - 1)) : 0;
     const char ch = at(s, (int)sy, (int)sx);
     int v = ch == 'X' || ch == 'M' ? 3 : ch == 'E' ? (o.shut ? 0 : 3) : ch == 'G' ? 2 : 0;
     if (!v) continue;
@@ -139,10 +136,7 @@ void shiftBuf(int dx) {   // screen shake
 }
 int stepIn(D t, const D* ts, int n) { int i = 0; while (i < n && t >= ts[i]) i++; return i; }
 
-// =============================================================================================
-// WOBBLES: a slinky. Stretches up, arches over into an upside-down U, clamps the food with the top of his
-// head; it travels the whole U and dissolves in his feet. Then he boings back.
-// =============================================================================================
+// ---- the routines, one per look. (Wobbles' path helpers first.)
 struct Pt { D x, y, hx, hy; };
 Pt PTS[600]; int NP = 0; D PLT = 0;
 void mkPath(D x0, D y0, D A1, D R, D al, D A2) {
@@ -158,10 +152,13 @@ void mkPath(D x0, D y0, D A1, D R, D al, D A2) {
   PLT = Lt;
 }
 Pt pAt(D a) { D i = jr(a / 0.25); if (i > NP - 1) i = NP - 1; if (i < 0) i = 0; return PTS[(int)i]; }
+
+// WOBBLES: a slinky. Stretches up, arches over into an upside-down U, clamps the food with the top of his
+// head; it travels the whole U and dissolves in his feet. Then he boings back.
 void wobbles(D t) {
   const D R = 8.5, Bv = 27, X0 = 11, fcx = X0 + 2 * R;
   D lam = 0, Ls = 10;
-  if (t < 0.7) Ls = 10;
+  if (t < 0.7) { /* standing: Ls stays 10 */ }
   else if (t < 1.0) Ls = lerp(10, 8, ez(pr(t, 0.7, 1)));
   else if (t < 1.8) Ls = lerp(8, 25, ez(pr(t, 1, 1.8)));
   else if (t < 3.0) { Ls = 25; lam = ez(pr(t, 1.8, 3.0)); }
@@ -210,22 +207,21 @@ void jelly(D t) {
   const D fcx = 28;
   if (t < 2.4) food(fcx, dropY(t, 0, 0.4, 23), 0);
   D left = 3, w = 14, h = 14, lift = 0;
-  if (t < 0.4) left = 3;
-  else if (t < 1.5) { const D k = pr(t, 0.4, 1.5); left = 3 + jr(k * 11); lift = hop(k, 3, 3); }
-  else if (t < 2.2) { const D k = pr(t, 1.5, 2.2); left = 14 + jr(ez(k) * 7); lift = jr(sin(k * PI) * 9); }
-  else if (t < 2.6) { const D k = ez(pr(t, 2.2, 2.6)); w = 14 + jr(10 * k); h = 14 - jr(10 * k); left = 28 - jr(w / 2); }
-  else { left = 21; const D k = pr(t, 2.6, 3.4); const D e = 1 - pow(1 - k, 2) * cos(k * 9); w = jr(lerp(24, 14, cl(k))); h = jr(lerp(4, 14, e)); left = 28 - jr(w / 2); }
-  const bool inside = t >= 2.6 && t < 5.1, shut = inside;
+  if (t >= 0.4 && t < 1.5) { const D k = pr(t, 0.4, 1.5); left = 3 + jr(k * 11); lift = hop(k, 3, 3); }
+  else if (t >= 1.5 && t < 2.2) { const D k = pr(t, 1.5, 2.2); left = 14 + jr(ez(k) * 7); lift = jr(sin(k * PI) * 9); }
+  else if (t >= 2.2 && t < 2.6) { const D k = ez(pr(t, 2.2, 2.6)); w = 14 + jr(10 * k); h = 14 - jr(10 * k); left = 28 - jr(w / 2); }
+  else if (t >= 2.6) { const D k = pr(t, 2.6, 3.4); const D e = 1 - pow(1 - k, 2) * cos(k * 9); w = jr(lerp(24, 14, cl(k))); h = jr(lerp(4, 14, e)); left = 28 - jr(w / 2); }
+  const bool swallowed = t >= 2.6 && t < 5.1, shut = swallowed;
   const D amp = t >= 2.6 && t < 5.8 ? 2.2 * exp(-(t - 2.6) * 0.7) : 0;
   const D y = 28 - h - lift;
   PO o; o.shut = shut; o.dxk = 1; o.a = t * 14; o.b = 0.8; o.c = amp;
   warp(t > 5.2 && t < 5.5 ? SPR_AD_JELLY_EAT : SPR_AD_JELLY, left, y, w, h, o);
-  if (inside && h > 9) {
+  if (swallowed && h > 9) {
     const D k = pr(t, 3.3, 5.0), fy = jr(lerp(28 - 14 + 7, 28 - 14 + 2, ez(k))); const int st = k < 0.35 ? 0 : k < 0.7 ? 1 : 2;
     if (k < 1) food(28, fy + (14 - h), st, PO().Mi(true));
   }
   if (t > 5.0 && t < 5.9) { const D k = pr(t, 5.0, 5.9); bubble(jr(30 + sin(k * 6) * 2), jr(10 - k * 8)); if (k > 0.85) spark(30, 2); }
-  if (t > 6.0 && fl(t * 4) % 2 == 0) put(SPR_SPARK, 38, 9);
+  if (t > 6.0 && fl(t * 4) % 2 == 0) spark(38, 9);
 }
 
 // PUDDLE: flows flat across the food, glugs it down in three gulps with bubbles, bunches into a dome, burps, slumps.
@@ -244,13 +240,12 @@ void puddle(D t) {
       set(fx0 + c, 23 + r, g >= go ? 1 : edge >= fx0 + c + 1 + rnd(r * 9 + c + 1) * 3 ? 2 : 3);
     }
   }
-  D left = 2, w = 20, h = 9; bool shut = false; const bool open = false;
-  if (t < 0.5) {}
-  else if (t < 1.7) { const D k = ez(pr(t, 0.5, 1.7)), k2 = ez(pr(t, 0.9, 1.7)); const D right = lerp(22, 38, k); left = jr(lerp(2, 14, k2)); w = jr(right - left); h = jr(lerp(9, 4, k)); }
-  else if (t < 3.6) { left = 14; w = 24; h = 4 + jr(2 * mx(0, sin((t - 2.0) * 10.5) * (t > 2.0 && t < 3.3 ? 1 : 0))); shut = true; }
-  else if (t < 4.5) { const D k = ez(pr(t, 3.6, 4.5)); w = jr(lerp(24, 14, k)); h = jr(lerp(4, 12, k)); left = jr(lerp(14, 20, k)); shut = true; }
-  else { const D k = pr(t, 4.5, 5.6); const D e = exp(-3 * k) * cos(k * 14); w = jr(20 - 6 * e); h = jr(9 + 3 * e); left = 20 - jr((w - 14) / 3); shut = k < 0.6; }
-  warp(open ? SPR_AD_PUDDLE_EAT : SPR_AD_PUDDLE, left, 28 - h, w, h, PO().S(shut));
+  D left = 2, w = 20, h = 9; bool shut = false;
+  if (t >= 0.5 && t < 1.7) { const D k = ez(pr(t, 0.5, 1.7)), k2 = ez(pr(t, 0.9, 1.7)); const D right = lerp(22, 38, k); left = jr(lerp(2, 14, k2)); w = jr(right - left); h = jr(lerp(9, 4, k)); }
+  else if (t >= 1.7 && t < 3.6) { left = 14; w = 24; h = 4 + jr(2 * mx(0, sin((t - 2.0) * 10.5) * (t > 2.0 && t < 3.3 ? 1 : 0))); shut = true; }
+  else if (t >= 3.6 && t < 4.5) { const D k = ez(pr(t, 3.6, 4.5)); w = jr(lerp(24, 14, k)); h = jr(lerp(4, 12, k)); left = jr(lerp(14, 20, k)); shut = true; }
+  else if (t >= 4.5) { const D k = pr(t, 4.5, 5.6); const D e = exp(-3 * k) * cos(k * 14); w = jr(20 - 6 * e); h = jr(9 + 3 * e); left = 20 - jr((w - 14) / 3); shut = k < 0.6; }
+  warp(SPR_AD_PUDDLE, left, 28 - h, w, h, PO().S(shut));
   if (t >= 1.7 && t < 3.7) for (int i = 0; i < 3; i++) { const D k = md(t * 0.9 + i * 0.37, 1); bubble(jr(18 + i * 7 + sin(t * 5 + i) * 1.5), jr(22 - k * 9)); }
   if (t > 4.4 && t < 5.0) { const D k = pr(t, 4.4, 5.0); bubble(24, jr(14 - k * 8)); }
   if (t > 5.6 && fl(t * 5) % 2 == 0) spark(32, 14);
@@ -311,14 +306,15 @@ void marshy(D t) {
   const bool open = t > 1.8 && t < 2.8;
   warp(open ? SPR_AD_MARSHY_EAT : SPR_AD_MARSHY, x - jr((w - 17) / 2), 28 - h, w, h, PO().S(t > 2.75 && t < 4.75));
   if (show) { const D ww = mx(2, jr(F.w * scl)), hh = mx(2, jr(F.h * scl)); warp(F.n[0], jr(X(fx) - ww / 2), jr(fy), ww, hh); }
-  if (t >= 1.65 && t < 1.9 && fl(t * 20) % 2 == 0) put(SPR_SPARK, flip ? 37 : 0, 3);
-  if (t >= 0.85 && t < 1.05) put(SPR_SPARK, X(14) - 1, 11);
+  if (t >= 1.65 && t < 1.9 && fl(t * 20) % 2 == 0) spark(flip ? 37 : 0, 3);
+  if (t >= 0.85 && t < 1.05) spark(X(14) - 1, 11);
   if (t > 4.8 && fl(t * 5) % 2 == 0) spark(x + 18, 16);
 }
 
 // BOOP: a potion flask. Cork pops, the food arcs in, the liquid rises and fizzes, cork back on, a steam puff.
 void boop(D t) {
   const D x = 3, y0 = 14, neckX = x + 6;
+  const FDs F = FD();
   if (t < 1.2) food(30, dropY(t, 0, 0.4, 23), 0);
   D cork = 0;
   if (t >= 0.5 && t < 1.0) cork = jr(ez(pr(t, 0.5, 0.7)) * 8);
@@ -327,19 +323,19 @@ void boop(D t) {
   const D level = t < 2.5 ? 0 : t < 3.4 ? ez(pr(t, 2.5, 3.4)) * 0.6 : t < 5.2 ? 0.6 : mx(0, 0.6 * (1 - pr(t, 5.2, 6.8)));
   const D rows = jr(level * 6);
   const Spr bs = sp(SPR_AD_BOOP);
-  for (D k = 0; k < rows; k++) { const int r = (int)(12 - k); const D y = y0 + r; for (int c = 1; c < 12; c++) if (at(bs, r, c) == '.' && c > 0) set(x + c, y, 2); }
+  for (D k = 0; k < rows; k++) { const int r = (int)(12 - k); const D y = y0 + r; for (int c = 1; c < 12; c++) if (at(bs, r, c) == '.') set(x + c, y, 2); }
   const D bounce = t > 4.3 && t < 4.9 ? jr(sin((t - 4.3) * 25)) : 0;
   const bool shut = t > 1.8 && t < 5.2, open = t > 0.9 && t < 2.0;
   put(open ? SPR_AD_BOOP_EAT : SPR_AD_BOOP, x + bounce, y0, PO().R(4, 13).S(shut));
   put(SPR_AD_BOOP, x + bounce, y0 - cork, PO().R(0, 3));
   if (t >= 1.0 && t < 2.0) {
     const D k = pr(t, 1.0, 2.0), fx = lerp(30, neckX, ez(k));
-    const D fy = k < 0.6 ? lerp(23, 4, k / 0.6) - 0 : lerp(4, y0 + 5, (k - 0.6) / 0.4);
-    const D ww = k < 0.55 ? FD().w : mx(3, jr(lerp(FD().w, 3, (k - 0.55) / 0.45)));
-    warp(FD().n[0], jr(fx - ww / 2), jr(fy - 0), ww, k < 0.55 ? 5 : 3);
+    const D fy = k < 0.6 ? lerp(23, 4, k / 0.6) : lerp(4, y0 + 5, (k - 0.6) / 0.4);
+    const D ww = k < 0.55 ? F.w : mx(3, jr(lerp(F.w, 3, (k - 0.55) / 0.45)));
+    warp(F.n[0], jr(fx - ww / 2), jr(fy), ww, k < 0.55 ? 5 : 3);
   }
-  if (t >= 2.0 && t < 3.6) { const D k = pr(t, 2.0, 3.6); const D fy = jr(lerp(y0 + 5, 25, mn(1, k * 1.6))); if (k < 0.9) warp(FD().n[k < 0.5 ? 0 : 1], neckX - 2, fy, 5, 3, PO().Mi(k > 0.5)); }
-  if (t > 2.4 && t < 5.4) for (int i = 0; i < 3; i++) { const D k = md(t * 1.2 + i * 0.33, 1); if (rows > 0) set(x + 4 + i * 3 + jr(sin(t * 9 + i)), 25 - k * (rows * 1.0 + 2), 3); }
+  if (t >= 2.0 && t < 3.6) { const D k = pr(t, 2.0, 3.6); const D fy = jr(lerp(y0 + 5, 25, mn(1, k * 1.6))); if (k < 0.9) warp(F.n[k < 0.5 ? 0 : 1], neckX - 2, fy, 5, 3, PO().Mi(k > 0.5)); }
+  if (t > 2.4 && t < 5.4) for (int i = 0; i < 3; i++) { const D k = md(t * 1.2 + i * 0.33, 1); if (rows > 0) set(x + 4 + i * 3 + jr(sin(t * 9 + i)), 25 - k * (rows + 2), 3); }
   if (t > 4.4 && t < 5.4) { const D k = pr(t, 4.4, 5.4); bubble(neckX - 1 + jr(sin(k * 8) * 2), jr(10 - k * 10)); }
   if (t > 6.7 && fl(t * 5) % 2 == 0) spark(x + 13, 13);
 }
@@ -347,14 +343,15 @@ void boop(D t) {
 // CURLY: a teapot. The lid hops, the food drops in; he heats up, shaking and whistling steam; one big blast.
 void curly(D t) {
   const D x = 3, y0 = 15;
+  const FDs F = FD();
   if (t < 1.8) {
     if (t < 0.4) food(30, dropY(t, 0, 0.4, 23), 0);
     else if (t < 0.9) food(30, 23, 0);
     else {
       const D k = pr(t, 0.9, 1.7);
       const D fx = lerp(30, x + 7, ez(k)), fy = lerp(23, 2, sin(k * PI / 2)) + (k > 0.8 ? (k - 0.8) / 0.2 * 6 : 0);
-      const D ww = mx(3, jr(lerp(FD().w, 3, k)));
-      warp(FD().n[0], jr(fx - ww / 2), jr(fy), ww, mx(3, jr(lerp(5, 3, k))));
+      const D ww = mx(3, jr(lerp(F.w, 3, k)));
+      warp(F.n[0], jr(fx - ww / 2), jr(fy), ww, mx(3, jr(lerp(5, 3, k))));
     }
   }
   D lid = 0;
@@ -363,7 +360,7 @@ void curly(D t) {
   else if (t >= 4.6 && t < 5.2) lid = jr(sin(pr(t, 4.6, 5.2) * PI) * 6);
   const bool heating = t > 1.9 && t < 4.7; const D shake = heating ? jr(sin(t * 40) * (0.5 + (t - 1.9) / 3)) : 0;
   const bool shut = t > 1.8 && t < 5.4, open = t > 1.0 && t < 1.9;
-  put(open ? SPR_TN_CURL_EAT : SPR_TN_CURL, x + shake, y0 + 0, PO().R(4, 12).S(shut));
+  put(open ? SPR_TN_CURL_EAT : SPR_TN_CURL, x + shake, y0, PO().R(4, 12).S(shut));
   put(SPR_TN_CURL, x + shake, y0 - lid, PO().R(0, 3));
   const D spx = x + 14, spy = y0 + 7;
   if (t > 2.0 && t < 6.0) for (int i = 0; i < 6; i++) {
@@ -389,11 +386,11 @@ void puff(D t) {
   if (t >= 1.4 && t < 3.0) sc = lerp(1, 1.32, ez(pr(t, 1.4, 3.0)));
   else if (t >= 3.0 && t < 3.5) sc = 1.32 + 0.06 * sin((t - 3.0) * 50);
   else if (t >= 3.5 && t < 5.4) { sc = lerp(1.32, 1, ez(pr(t, 3.5, 5.4))); lift = jr(sin(pr(t, 3.5, 5.4) * PI) * 5); }
-  const D w = jr(19 * sc), h = jr(13 * sc), x = jr(12.5 - w / 2 + x0 - 3 + 3);
+  const D w = jr(19 * sc), h = jr(13 * sc), x = jr(12.5 - w / 2 + x0);
   const bool open = t > 0.8 && t < 2.7;
   warp(open ? SPR_AD_PUFF_EAT : SPR_AD_PUFF, x, 28 - h - lift, w, h, PO().S(t > 2.6 && t < 5.6));
   if (t > 0.9 && t < 2.6) for (int i = 0; i < 3; i++) { const D k = md(t * 2.2 + i / 3.0, 1); const D lx = jr(lerp(fx + 6, 22, k)); const D ly = 24 - i * 3; line(lx, ly, lx + 3, ly, k < 0.3 ? 2 : 3); }
-  if (t > 3.0 && t < 3.5 && fl(t * 16) % 2 == 0) put(SPR_SPARK, 24, 12);
+  if (t > 3.0 && t < 3.5 && fl(t * 16) % 2 == 0) spark(24, 12);
   if (t > 3.5 && t < 5.4) for (int i = 0; i < 4; i++) { const D k = pr(t, 3.5 + i * 0.25, 4.6 + i * 0.25); if (k > 0 && k < 1) bubble(jr(x + (i % 2 ? w : -3) + (i % 2 ? 1 : -1) * k * 6), jr(28 - h / 2 - lift - k * 4 * (i % 2 ? 1 : -1))); }
   if (t > 5.6 && fl(t * 5) % 2 == 0) spark(22, 12);
 }
@@ -418,12 +415,12 @@ void loaf(D t) {
     return 0;
   };
   const bool shut = t > 2.3 && t < 6.5, open = t > 1.5 && t < 2.4;
-  const Spr Rs = sp(open ? SPR_AD_LOAF_EAT : SPR_AD_LOAF); const D sw_ = 20;
+  const Spr Rs = sp(open ? SPR_AD_LOAF_EAT : SPR_AD_LOAF);
   for (D cx = 0; cx < w; cx++) {
-    const D extra = colH(cx), ch = h + extra, sx = w > 1 ? jr(cx * (sw_ - 1) / (w - 1)) : 0;
+    const D extra = colH(cx), ch = h + extra, sx = w > 1 ? jr(cx * (Rs.w - 1) / (w - 1)) : 0;
     const D wg = (t >= 0.6 && t < 1.3 && cx >= 15) ? wig : 0;
     for (D dy = 0; dy < ch; dy++) {
-      const D sy = ch > 1 ? jr(dy * (11 - 1) / (ch - 1)) : 0; const char c = at(Rs, (int)sy, (int)sx);
+      const D sy = ch > 1 ? jr(dy * (Rs.h - 1) / (ch - 1)) : 0; const char c = at(Rs, (int)sy, (int)sx);
       const int v = c == 'X' || c == 'M' ? 3 : c == 'E' ? (shut ? 0 : 3) : c == 'G' ? 2 : 0;
       if (v) set(left + cx, 28 - ch - lift + dy + wg, v);
     }
@@ -436,7 +433,7 @@ void nimbus(D t) {
   D left = 3, by = 16; const bool rain = t < 1.0 || (t > 3.9 && t < 6.0), storm = t > 3.3 && t < 5.9;
   if (t >= 1.0 && t < 2.2) left = 3 + jr(ez(pr(t, 1.0, 2.2)) * 19);
   else if (t >= 2.2) left = 22;
-  const D hover = jr(sin(t * 3) * 1);
+  const D hover = jr(sin(t * 3));
   by = 16 + (t >= 1.0 ? -3 : 0) + hover;
   if (t < 3.4) {
     const D fcx = 31;
@@ -444,7 +441,7 @@ void nimbus(D t) {
     else if (t < 2.4) food(fcx, 23, 0);
     else { const D k = ez(pr(t, 2.4, 3.4)); const D ww = mx(2, jr(FD().w * (1 - k * 0.7))); const D ang = k * 9; if (k < 1) warp(FD().n[0], jr(fcx - ww / 2 + sin(ang) * 3 * (1 - k)), jr(lerp(23, by + 4, k)), ww, mx(2, jr(5 * (1 - k * 0.5))), PO().Mi(k > 0.5)); }
   }
-  const bool bshut = t > 3.3 && t < 5.9;
+  const bool bshut = t > 3.3 && t < 6.4;   // eyes shut the whole time, through the storm and the clearing
   put(storm ? SPR_AD_NIMBUS_EAT : SPR_AD_NIMBUS, left, by, PO().R(0, 8).S(bshut).Dk((storm && fl(t * 3) % 2 == 0) || (storm && t > 3.6)));
   if (rain) for (int c = 0; c < 3; c++) for (int i = 0; i < 3; i++) {
     const D spd = storm ? 12 : 5, yy = by + 9 + md(t * spd + c * 2 + i * 3.1, 10);
@@ -455,14 +452,12 @@ void nimbus(D t) {
   if (t >= 3.35 && t < 3.7) { D x = left + 8, y = by + 9; for (int i = 0; i < 5; i++) { const D nx = x + (i % 2 ? 2 : -2), ny = y + 3; line(x, y, nx, ny, 3); x = nx; y = ny; if (y > 27) break; } }
   if (t >= 3.9 && t < 6.0) { const D k = pr(t, 3.9, 5.8); const D w = jr(k * 12); rect(left + 8 - jr(w / 2), 27, w, 1, 2); }
   if (t >= 5.9) {
-    put(SPR_AD_NIMBUS, left, by, PO().R(0, 8).S(t < 6.4));
     const D k = pr(t, 6.0, 6.8);
     for (D a = 0; a < 17 * k; a++) { const D ang = PI * (1 - a / 17); const D cx = left + 8, cy = by - 1; set(cx + cos(ang) * 9, cy - sin(ang) * 7, 3); set(cx + cos(ang) * 8, cy - sin(ang) * 6, 2); }
   }
 }
 
-// BALLBOI: zoomed out, he runs in inside his hamster ball (the shell spins round him, he stays at the bottom);
-// zoom back in: stuffs his cheeks a gulp at a time, chews, ptooey: a fish skeleton.
+// (Ballboi's two halves: the zoomed-out run-in, then the zoomed-in feast, which starts at BB_T0.)
 constexpr D BB_T0 = 3.25;
 const char* const BB_HEAD[] = {".XX...XX.", "X..XXX..X", "X.......X", "X.E...E.X", "X...M...X", ".X.....X.", "..XXXXX.."};
 void hamsterBall(D cx, D cy, D ang, D lean, D bob) {
@@ -484,7 +479,7 @@ void ballboiScene(D t) {
   D x = 2, bob = 0;
   if (t >= 0.4 && t < 1.5) { const D k = pr(t, 0.4, 1.5); x = 2 + jr(k * 9); bob = hop(k, 4, 1); }
   else if (t >= 1.5) x = 11;
-  D cheek = t < 1.6 ? 0 : t < 2.7 ? gul + pr(t, 1.6 + (gul - 1) * 0.5, 2.1 + (gul - 1) * 0.5) * 0 : t < 4.2 ? 3 : t < 4.8 ? 3 * (1 - pr(t, 4.2, 4.8)) : 0;
+  D cheek = t < 1.6 ? 0 : t < 2.7 ? gul : t < 4.2 ? 3 : t < 4.8 ? 3 * (1 - pr(t, 4.2, 4.8)) : 0;
   cheek = jr(cheek);
   const bool open = t > 1.5 && t < 2.7 && fl(t * 6) % 2 == 0;
   const bool shut = t > 2.7 && t < 5.0;
@@ -495,6 +490,8 @@ void ballboiScene(D t) {
   if (t >= 4.3 && t < 5.4) { const D k = pr(t, 4.3, 5.4); const D bx = x + 14 + k * 18, by_ = 20 + 14 * k * k - 10 * k; put(X_BONE, jr(bx), jr(by_)); }
   if (t > 5.4 && fl(t * 5) % 2 == 0) spark(x + 17, 12);
 }
+// BALLBOI: zoomed out, he runs in inside his hamster ball (the shell spins round him, he stays at the bottom);
+// zoom back in: stuffs his cheeks a gulp at a time, chews, ptooey: a fish skeleton.
 void ballboi(D t) {
   if (t >= BB_T0) { ballboiScene(t - BB_T0 + 1.5); return; }
   const FDs F = FD();
@@ -533,9 +530,9 @@ void sprout(D t) {
   else if (t >= 3.3 && t < 5.6) grow = 6; else if (t >= 5.6 && t < 6.2) grow = jr((1 - ez(pr(t, 5.6, 6.2))) * 6);
   const bool shut = t > 1.7 && t < 5.9;
   const D y0 = 13 - hopY;
-  put(SPR_TN_SPROUT, x, y0 + 0, PO().R(5, 14).S(shut));
+  put(SPR_TN_SPROUT, x, y0, PO().R(5, 14).S(shut));
   for (D i = 1; i <= grow; i++) set(x + 7, y0 + 5 - i + 1, 3);
-  const D sway = t > 3.3 && t < 5.6 ? jr(sin(t * 4) * 1) : 0;
+  const D sway = t > 3.3 && t < 5.6 ? jr(sin(t * 4)) : 0;
   put(SPR_TN_SPROUT, x + sway, y0 - grow, PO().R(0, 4));
   if (t >= 1.7 && t < 2.8) for (int i = 0; i < 4; i++) { const D k = md((t - 1.7) * 1.3 + i * 0.25, 1); set(x + 7 + jr(sin(k * 8 + i) * 1.5), y0 + 13 - k * 12, 3); }
   if (t >= 3.2 && t < 5.7) { const D k = ez(pr(t, 3.2, 3.9)); const D s = mx(1, jr(5 * k)); if (s >= 5) put(SPR_FLOWER, x + 5 + sway, y0 - grow - 5); else if (s > 1) rect(x + 7 + sway, y0 - grow - s + 1, 1, s, 3); }
@@ -562,7 +559,7 @@ void fubz(D t) {
     const D cx = jr(bx + roll), cy = jr(t > 5.2 ? 25 : by);
     disc(cx, cy, 2, 2); set(cx - 1, cy - 1, 3); set(cx + 1, cy, 3);
   }
-  if (t > 5.0 && t < 5.4 && fl(t * 20) % 2 == 0) put(SPR_SPARK, x + 19, 12);
+  if (t > 5.0 && t < 5.4 && fl(t * 20) % 2 == 0) spark(x + 19, 12);
   if (t > 6.2 && fl(t * 5) % 2 == 0) spark(x + 16, 13);
 }
 
@@ -576,7 +573,7 @@ void dapper(D t) {
   const bool shut = (t >= 3.5 && t < 4.2) || (t >= 4.7 && t < 5.4);
   put(openm ? SPR_S1C_EAT : SPR_S1C_IDLE, x, y0 - (t > 0.4 && t < 0.6 ? 1 : 0), PO().S(shut));
   if (t >= 0.5 && t < 1.2) { const D k = ez(pr(t, 0.5, 1.2)); put(X_FORK, fv + 6, jr(lerp(-5, 15, k))); put(X_KNIFE, fv + 1, jr(lerp(-5, 15, k))); }
-  else if (t >= 1.2 && t < 2.9) { const D sw_ = t > 1.7 && t < 2.8 ? jr(sin((t - 1.7) * 16) > 0 ? 1 : 0) : 0; put(X_FORK, fv + 6, 15 + 0); put(X_KNIFE, fv + 1 + sw_, 15); if (sw_ != 0 && fl(t * 8) % 4 == 0) spark(fv + 3, 12); }
+  else if (t >= 1.2 && t < 2.9) { const D sw_ = t > 1.7 && t < 2.8 ? jr(sin((t - 1.7) * 16) > 0 ? 1 : 0) : 0; put(X_FORK, fv + 6, 15); put(X_KNIFE, fv + 1 + sw_, 15); if (sw_ != 0 && fl(t * 8) % 4 == 0) spark(fv + 3, 12); }
   else if (t >= 2.9 && t < 3.5) { const D k = ez(pr(t, 2.9, 3.5)); put(X_FORK, jr(lerp(fv + 6, x + 14, k)), jr(lerp(15, y0 + 8, k))); warp(FD().n[2], jr(lerp(fv + 6, x + 14, k)) + 1, jr(lerp(15, y0 + 8, k)) - 3, 3, 3); put(X_KNIFE, fv + 1, 15); }
   else if (t >= 3.5 && t < 4.0) { const D k = ez(pr(t, 3.5, 4.0)); put(X_FORK, jr(lerp(x + 14, fv + 6, k)), jr(lerp(y0 + 8, 15, k))); put(X_KNIFE, fv + 1, 15); }
   else if (t >= 4.0 && t < 4.7) { const D k = ez(pr(t, 4.0, 4.5)); put(X_FORK, jr(lerp(fv + 6, x + 14, k)), jr(lerp(15, y0 + 8, k))); warp(FD().n[2], jr(lerp(fv + 6, x + 14, k)) + 1, jr(lerp(15, y0 + 8, k)) - 3, 3, 3); put(X_KNIFE, fv + 1, 15); }
@@ -585,9 +582,6 @@ void dapper(D t) {
   if (t > 6.4 && fl(t * 5) % 2 == 0) spark(x + 16, y0 + 1);
 }
 
-// =============================================================================================
-// ROUND 2
-// =============================================================================================
 // BEAN: a jumping bean. Swallows it whole, it rattles around inside, three wild hops, a little pop, calm.
 void bean(D t) {
   const FDs F = FD(); const D fcx = 31, y0 = 17;
@@ -616,13 +610,11 @@ void bean(D t) {
     rect(x + lx - tilt * jr((5 - ly) * 0.2), 28 - h - lift + ly, 3, 2, 2);
     if (t > 2.3 && fl(t * 12) % 2 == 0) { set(x - 2, 28 - h - lift + 3, 3); set(x + 15, 28 - h - lift + 5, 3); set(x - 3, 28 - h - lift + 6, 3); }
   }
-  if (t >= 1.95 && t < 2.3) put(SPR_SPARK, x + 6, y0 - 6);
+  if (t >= 1.95 && t < 2.3) spark(x + 6, y0 - 6);
   if (t >= 4.85 && t < 5.15) ring(x + 6, y0 - 3, 1 + jr(pr(t, 4.85, 5.15) * 2), 3);
   if (t > 5.6 && fl(t * 5) % 2 == 0) spark(x + 14, y0);
 }
 
-// BUN: a bao bun, and it stuffs itself. The pinched top comes undone, it flips over onto the food (which goes in
-// through the top, as the filling), flips back, pinches itself shut again and steams: a puff with every chew.
 void baoBody(int id, D x, D y, D g, bool over, bool shut) {   // g: how far the pleats at the top are pulled apart; over: upside down
   const Spr s = sp(id);
   for (int r = 0; r < s.h; r++) for (int c = 0; c < s.w; c++) {
@@ -633,6 +625,8 @@ void baoBody(int id, D x, D y, D g, bool over, bool shut) {   // g: how far the 
     set(x + c + dx, over ? y + s.h - 1 - r : y + r, 3);
   }
 }
+// BUN: a bao bun, and it stuffs itself. The pinched top comes undone, it flips over onto the food (which goes in
+// through the top, as the filling), flips back, pinches itself shut again and steams: a puff with every chew.
 void bun(D t) {
   const D x0 = 8, x1 = 21, x2 = 12, y0 = 17, fcx = x1 + 7;   // (x1: standing right over the food)
   D g = 0;
@@ -665,7 +659,6 @@ void bun(D t) {
   if (t > 5.8 && fl(t * 5) % 2 == 0) spark(bx + 17, by);
 }
 
-// SLOSH: a jar of liquid. Slurps the food up, level rises, sloshes, a drop spills; he hops over and slurps it too.
 void sloshBody(int id, D x, D y, D L, D T, D wph, bool shut) {
   const Spr s = sp(id); const int w = s.w; const D mid = (w - 1) / 2.0;
   for (int r = 0; r < s.h; r++) {
@@ -688,6 +681,7 @@ void sloshBody(int id, D x, D y, D L, D T, D wph, bool shut) {
     }
   }
 }
+// SLOSH: a jar of liquid. Slurps the food up, level rises, sloshes, a drop spills; he hops over and slurps it too.
 void slosh(D t) {
   const D fcx = 31, y0 = 16;
   D x = 2, L = 6.4, T = 0, lift = 0;
@@ -696,7 +690,7 @@ void slosh(D t) {
   else if (t >= 1.0) x = 11;
   static const D sts[3] = {1.5, 2.0, 2.5};
   const int st = stepIn(t, sts, 3);
-  if (t >= 0.4 && t < 2.6) food(fcx, 23, st < 3 ? st : 3);
+  if (t >= 0.4 && t < 2.6) food(fcx, 23, st);
   if (t >= 1.0 && t < 2.6) {
     L = lerp(6.4, 4.6, pr(t, 1.0, 2.6));
     for (int i = 0; i < 4; i++) { const D k = md((t - 1.0) * 2.2 + i / 4.0, 1); set(jr(lerp(fcx - 3, x + 8, k)), jr(lerp(25, y0 + 5, k) - sin(k * PI) * 3), 2); }
@@ -719,7 +713,6 @@ void slosh(D t) {
   if (t > 6.0 && fl(t * 5) % 2 == 0) spark(x + 16, y0);
 }
 
-// MALLOW: a s'more. Sits on the food, a tiny campfire toasts him melty, chocolate drips, fire out, happy puddle.
 void campfire(D x, D t, bool out) {
   set(x, 27, 3); set(x + 4, 27, 3); set(x + 1, 26, 3); set(x + 3, 26, 3); set(x + 2, 27, 3);
   if (out) return;
@@ -732,6 +725,7 @@ void campfire(D x, D t, bool out) {
   else for (const auto& p : s2) set(x + p[0], p[1], 3);
   set(x + 2 + f, 21 - (f == 1 ? 1 : 0), 2);
 }
+// MALLOW: a s'more. Sits on the food, a tiny campfire toasts him melty, chocolate drips, fire out, happy puddle.
 void mallow(D t) {
   const D fcx = 28, fx0 = 14;
   D cx = 9, lift = 0, w = 12, h = 10, base = 28;
@@ -780,7 +774,7 @@ void spiky(D t) {
   const D restX = x0, restY = btop - 6;
   D hx = restX, hy = restY;
   const D fx = fcx - 6.5, fy = 17;
-  if (t >= 0.4 && t < 0.8) {}
+  if (t >= 0.4 && t < 0.8) { /* at rest */ }
   else if (t >= 0.8 && t < 1.4) { const D k = ez(pr(t, 0.8, 1.4)); hx = lerp(restX, fx, k); hy = lerp(restY, fy, k) - sin(k * PI) * 7; }
   else if (t >= 1.4 && t < 2.6) { hx = fx; hy = fy + (md(t - 1.4, 0.4) < 0.2 ? 1 : 0); }
   else if (t >= 2.6 && t < 3.6) {
@@ -836,16 +830,12 @@ void blobbert(D t) {
     if (t >= 5.3) { const D k = t - 5.3, a = exp(-k * 1.6); w = 17 + sin(k * 13) * 2.4 * a; h = 13 - sin(k * 13) * 1.6 * a; shut = k > 0.3 && k < 1.1; }
   }
   floorWarp(SPR_S0_IDLE, cx, jr(w), jr(h), 0, PO().S(shut));
-  if (t >= 2.6 && t < 2.85) put(SPR_SPARK, jr(cx - w / 2) - 5, 14);
+  if (t >= 2.6 && t < 2.85) spark(jr(cx - w / 2) - 5, 14);
   if (t > 6.2 && fl(t * 5) % 2 == 0) spark(jr(cx + 10), 13);
 }
 
-// MOCHI: the daifuku wrap. Squashes into a low bun, slides under the food (it hops up onto their head), the sides
-// grow up round it and close over the top, a pinch and a twist; three gulps take the filling down and the dumpling
-// with it, and the twist pops undone into two ears. It is drawn with mochiShape / mochiFace, which at 13 x 8 with
-// ears of 2 are the sprite dot for dot, so the body
-// can squash, stretch and grow a pouch and still come back to exactly what it started as: no cuts, and the eyes only
-// ever move a dot at a time.
+// (Mochi is drawn with mochiShape / mochiFace, which at 13 x 8 with ears of 2 are the sprite dot for dot, so the
+// body can squash, stretch and grow a pouch and still come back to exactly what it started as.)
 void mochiShape(D l, D w, D top, D bot, D ear) {   // the outline: l..l+w-1, top..bot, ears "ear" dots tall (0: none)
   l = jr(l); w = jr(w); top = jr(top); bot = jr(bot); ear = jr(ear);
   const D r = l + w - 1, pl = l + 3, pr_ = r - 3;
@@ -885,6 +875,8 @@ void dumpling(D cx, D w, D top, D ry, D open) {   // flat on the floor, a domed 
     py = y;
   }
 }
+// MOCHI: the daifuku wrap. Squashes into a low bun, slides under the food, the sides grow up round it and close
+// over the top (a pinch and a twist); three gulps take the filling down, and the twist pops undone into two ears.
 void mochi(D t) {
   const D fcx = 27, x0 = 10;
   if (t < 1.8) {   // squash, slide under
@@ -981,10 +973,8 @@ void bigBlobbert(D t) {
   if (t >= 5.6) shut = true;
   const D bx = jr(cx + 0.5 - w / 2);
   if (hasF && mid) food(cx, fy, st, PO().Mi(true));   // once it is inside him it is drawn first, so his outline is never broken by it
-  // His body, squashed to w x h. Not warp(): shrinking, that picks one sprite dot for each dot on the screen and drops
-  // the others, which left gaps in the outline wherever it steps. Here every dot of the outline is put where it
-  // lands, so a line that is joined up in the sprite is joined up on the screen. (Stretched bigger than the sprite it
-  // is the other way about, so then warp()'s dots are drawn as well.) The glare is sampled as before.
+  // His body, squashed to w x h. Not warp(), which drops outline dots when shrinking: here every dot of the outline
+  // is put where it lands, so a joined-up line stays joined up (warp's dots are added when stretching).
   {
     const Spr s = sp(SPR_BB_BLOBBERT); const D ww = mx(1, jr(w)), hh = mx(1, jr(h));
     for (D dy = 0; dy < hh; dy++) for (D dx = 0; dx < ww; dx++) {
@@ -1001,15 +991,13 @@ void bigBlobbert(D t) {
   }
   if (hasF && !mid) food(cx, fy, st);
   if (t >= 1.0 && t < 1.2) { spark(bx + 4, top - 2); spark(bx + w - 9, top - 2); }
-  if (t >= 5.0 && t < 6.4) { const D k = pr(t, 5.0, 6.4); const D by = jr(top - 2 - k * 10); if (by > -3) put(SPR_BUBBLE, cx - 1 + jr(sin(k * 8)), by); }
+  if (t >= 5.0 && t < 6.4) { const D k = pr(t, 5.0, 6.4); const D by = jr(top - 2 - k * 10); if (by > -3) bubble(cx - 1 + jr(sin(k * 8)), by); }
   if (t > 6.0 && fl(t * 5) % 2 == 0) spark(bx + w - 7, top + 1);
   shiftBuf(shake);
 }
 
-// BIG BALLBOI: rolls onto the food (squashed flat, stuck to the ball), rolls back half a turn so the pancake rides
-// up the back to the top, a hatch opens, it drops onto his head and into his mouth.
-void bigShell(D cx, D cy, D ang, bool hatchOn, D hatch) {
-  const D R = 13;
+void bigShell(D cx, D cy, D ang, bool hatchOn) {
+  const D R = 13, hatch = -PI / 2;   // the hatch sits at the top of the ball
   for (D dy = -R - 1; dy <= R + 1; dy++) for (D dx = -R - 1; dx <= R + 1; dx++) {
     if (!inRim(dx * dx + dy * dy, R)) continue;
     if (hatchOn) {   // (the angle is only worked out while the hatch is open)
@@ -1022,6 +1010,8 @@ void bigShell(D cx, D cy, D ang, bool hatchOn, D hatch) {
   static const D gl[4][2] = {{-2.45, 11}, {-2.3, 11}, {-2.15, 11}, {-2.4, 10}};
   for (const auto& g : gl) set(jr(cx + cos(g[0]) * g[1]), jr(cy + sin(g[0]) * g[1]), 2);
 }
+// BIG BALLBOI: rolls onto the food (squashed flat, stuck to the ball), rolls back half a turn so the pancake rides
+// up the back to the top, a hatch opens, it drops onto his head and into his mouth.
 void bigBallboi(D t) {
   const FDs F = FD(); const D fcx = 26, cy = 14, R = 13, M = 1.6;
   D cx = 13, lean = 0, bob = 0; bool open = false;
@@ -1053,7 +1043,7 @@ void bigBallboi(D t) {
     }
   }
   const bool hasPan = t >= 1.6 && t < peel; const D pan = PI / 2 + (ang - angMax);
-  bigShell(jr(cx), cy, ang, t >= 3.6 && t < peel + 0.5, -PI / 2);
+  bigShell(jr(cx), cy, ang, t >= 3.6 && t < peel + 0.5);
   if (hasPan) {
     for (int i = -3; i <= 3; i++) { const D a = pan + i / 13.0; set(jr(cx + cos(a) * 13), jr(cy + sin(a) * 13), 2); }
     for (int i = -2; i <= 2; i++) { const D a = pan + i / 14.0; set(jr(cx + cos(a) * 14), jr(cy + sin(a) * 14), 3); }
@@ -1078,7 +1068,7 @@ void alien(D t) {
   put(SPR_BB_ALIEN, x, y, PO().NoE());
   const Spr Ra = sp(SPR_BB_ALIEN);
   const bool blink = t >= 5.0 && t < 5.15;
-  for (int r = 0; r < Ra.h; r++) for (int c = 0; c < 17; c++) if (at(Ra, r, c) == 'E') {
+  for (int r = 0; r < Ra.h; r++) for (int c = 0; c < Ra.w; c++) if (at(Ra, r, c) == 'E') {
     if (blink) continue;
     const int v = glow ? (fl(t * 8 + c + r) % 3 == 0 ? 2 : 3) : 3; set(x + c, y + r, v);
   }
@@ -1088,7 +1078,7 @@ void alien(D t) {
   if (t >= 1.2 && t < 2.6) { const D k = ez(pr(t, 1.2, 2.6)); fx = lerp(fcx, x + 22, k); fy = lerp(23, y + 10, k) + sin(t * 9) * 0.8; }
   static const D bites[3] = {2.8, 3.25, 3.7};
   if (t >= 2.6) { st = stepIn(t, bites, 3); fx = x + 22 - st * 1.5; fy = y + 10; }
-  if (st < 3) food(jr(fx), jr(fy), st < 2 ? st : 2);
+  if (st < 3) food(jr(fx), jr(fy), st);
   if (glow && t >= 1.0 && st < 3) {
     for (D ex : {x + 5, x + 12}) {
       const D eyv = y + 9.5, tx = fx, ty = fy + 2, n = jr(hypot(tx - ex, ty - eyv));
@@ -1119,7 +1109,7 @@ void alien(D t) {
 
 // ---- the table
 struct Entry { void (*fn)(D); float dur; float cues[6]; int ncue; };
-const Entry TABLE[R_COUNT] = {
+constexpr Entry TABLE[] = {   // in Routine enum order
   {nullptr, 0, {0}, 0},
   {wobbles, 7.6f, {3.0f, 5.0f}, 2},
   {jelly, 7.0f, {2.2f, 5.25f}, 2},
@@ -1147,6 +1137,17 @@ const Entry TABLE[R_COUNT] = {
   {bigBallboi, 7.0f, {1.45f, 4.05f, 4.6f, 5.0f, 5.4f}, 5},
   {alien, 6.9f, {2.8f, 3.25f, 3.7f, 5.3f}, 4},
 };
+static_assert(sizeof(TABLE) / sizeof(TABLE[0]) == R_COUNT, "one TABLE entry per Routine");
+// each entry's ncue is the number of leading non-zero cues
+constexpr bool cuesMatch() {
+  for (const Entry& e : TABLE) {
+    int n = 0;
+    while (n < 6 && e.cues[n] > 0.0f) n++;
+    if (n != e.ncue) return false;
+  }
+  return true;
+}
+static_assert(cuesMatch(), "ncue must match the cues listed");
 
 }  // namespace
 

@@ -29,16 +29,6 @@ float drainScale(float age, bool fun) {
   return fun ? byAge(age, f, 7) : byAge(age, h, 7);
 }
 
-int giftValue(uint8_t p) {
-  switch (p) {
-    case GIFT_FLOWER: return 2;
-    case GIFT_SHELL: return 3;
-    case GIFT_PEBBLE: return 3;
-    case GIFT_BERRY: return 5;
-    case GIFT_GEM: return 12;
-    default: return 0;
-  }
-}
 const char* endingName(uint8_t e) {
   switch (e) {
     case END_RECYCLED: return "Recycled";
@@ -68,13 +58,13 @@ void Pet::newPet(uint32_t seed, int breed, const char* name) {
 
 void Pet::push(EventType t, int a, int b) {
   q_[qt_] = {t, (int16_t)a, (int16_t)b};
-  qt_ = (uint8_t)((qt_ + 1) % 12);
-  if (qt_ == qh_) qh_ = (uint8_t)((qh_ + 1) % 12);
+  qt_ = (uint8_t)((qt_ + 1) % QN);
+  if (qt_ == qh_) qh_ = (uint8_t)((qh_ + 1) % QN);
 }
 bool Pet::pop(Event& e) {
   if (qh_ == qt_) return false;
   e = q_[qh_];
-  qh_ = (uint8_t)((qh_ + 1) % 12);
+  qh_ = (uint8_t)((qh_ + 1) % QN);
   return true;
 }
 
@@ -91,14 +81,14 @@ int Pet::evolveChoice() const {
   float clean = cl(d.acc[ACC_CLEAN] / (0.9f * h)) * 0.7f + cl(d.cleanActs / 5.0f) * 0.3f;
   float wavg = d.acc[ACC_WEIGHT] / h, weight = cl((wavg - 0.35f) / 0.25f);
   float neglect = cl(d.acc[ACC_NEGLECT] / h * 2.5f), love = cl(d.acc[ACC_LOVE] / (0.8f * h));
-  float sc[7];
+  float sc[SP_COUNT];
   sc[SP_PALE] = speed; sc[SP_BIG] = strength; sc[SP_PATCHY] = weight;
   sc[SP_SMOOTH] = (clean > 0.75f && wavg < 0.27f) ? clean * 0.95f : clean * 0.4f;
   sc[SP_SPECKLE] = (love + clean) * 0.5f * 0.85f;
   sc[SP_VOID] = neglect >= 0.5f ? 1.5f + neglect : neglect * 0.5f;
   sc[SP_PLAIN] = 0.42f;
   int best = SP_PLAIN;
-  for (int i = 0; i < 7; i++) if (sc[i] > sc[best]) best = i;
+  for (int i = 0; i < SP_COUNT; i++) if (sc[i] > sc[best]) best = i;
   return best;
 }
 
@@ -121,7 +111,6 @@ void Pet::clampAll() {
   d.resent = clampf(d.resent, 0, 100);
   if (d.droppings > BOX_MAX) d.droppings = BOX_MAX;
   if (d.floorMess > 4) d.floorMess = 4;
-  d.bubblesOnFloor = 0;
   for (int i = 0; i < 3; i++) if (d.sick[i] > SICK_MAX) d.sick[i] = SICK_MAX;
 }
 

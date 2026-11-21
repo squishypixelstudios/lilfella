@@ -297,7 +297,7 @@ struct V010 {
       // left alone until the game puts it away, then another poop arrives
       run(g, p, GAME_IDLE_SECS + 1.0f);
       check(g.scr == S_MAIN, "left untouched, the scrub is put away");
-      if (!g.displayOn()) tapDot(g, p, 20, 14);   // (with the motion sensor off the screen has gone dark by now: the first touch only wakes it)
+      if (!g.displayOn()) tapDot(g, p, 20, 14);   // (Auto off has probably darkened the screen by now: the first touch only wakes it)
       d.droppings = 4;
       tapIcon(g, p, IC_LITTER); run(g, p, 0.1f);
       bool kept = g.scr == S_SCRUB && g.sc_.np == 5;
@@ -433,7 +433,7 @@ struct V010 {
         h.debugAct(0);
         int prev = -1, maxJump = 0, frames = 0, minLit = 9999; bool edge = false; float prevCx = -1, maxSlide = 0;
         for (int i = 0; h.scr == S_ANIM && i < 30 * 12; i++) {
-          h.idleSec = 0;   // (the screen stays on: with the motion sensor off it would go dark after 15 s untouched, and the meal with it)
+          h.idleSec = 0;   // (keeps the screen from going dark on the Auto off timer, and the meal with it)
           step(h, p2);
           // where the picture's weight is: it never leaps across, not even on the frame that hands over to the home screen
           { long sx = 0; int n = 0; for (int y = 0; y < MH; y++) for (int x = 0; x < MW; x++) if (h.dots()[y * MW + x]) { sx += x; n++; }
@@ -476,7 +476,7 @@ struct V010 {
         if (g.scr != S_MAIN || g.form() == F_DROPPER) continue;
         if (g.pet.sleeping) {
           if (!g.lightOff()) { tapIcon(g, p, IC_LIGHT); run(g, p, 0.2f); }
-          else if (shake && (g.pet.nap > 0) && learned) { g.pet.disturb(); g.handleEvents(); g.setLight(false); }   // (only with the motion sensor on)   // shaken awake, light back on
+          else if (shake && (g.pet.nap > 0) && learned) { g.pet.disturb(); g.handleEvents(); g.setLight(false); }   // shaken awake, light back on
           continue;
         }
         if (g.pet.sick()) { tapIcon(g, p, IC_MEDS); run(g, p, MEDS_SECS + 0.5f); continue; }

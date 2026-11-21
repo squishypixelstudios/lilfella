@@ -15,7 +15,6 @@
 #include "esp_err.h"
 
 /* ES8311 address: CE pin low - 0x18, CE pin high - 0x19 */
-#define ES8311_ADDRRES_0 0x18u // Leaving this here for backward compatibility
 #define ES8311_ADDRESS_0 0x18u
 #define ES8311_ADDRESS_1 0x19u
 
@@ -182,7 +181,7 @@ esp_err_t es8311_microphone_config(es8311_handle_t dev, bool digital_mic);
 esp_err_t es8311_sample_frequency_config(es8311_handle_t dev, int mclk_frequency, int sample_frequency);
 
 /**
- * @brief Configure fade in/out for ADC: voice
+ * @brief Configure fade in/out for DAC: voice
  *
  * @param dev ES8311 handle
  * @param[in] fade Fade ramp rate
@@ -193,7 +192,7 @@ esp_err_t es8311_sample_frequency_config(es8311_handle_t dev, int mclk_frequency
 esp_err_t es8311_voice_fade(es8311_handle_t dev, const es8311_fade_t fade);
 
 /**
- * @brief Configure fade in/out for DAC: microphone
+ * @brief Configure fade in/out for ADC: microphone
  *
  * @param dev ES8311 handle
  * @param[in] fade Fade ramp rate

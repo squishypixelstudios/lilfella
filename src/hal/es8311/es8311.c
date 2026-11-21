@@ -4,9 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "es8311.h"
-#include "driver/gpio.h"
+#include "driver/gpio.h"   // (also provides BIT)
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_check.h"
@@ -162,7 +163,7 @@ static inline esp_err_t es8311_read_reg(es8311_handle_t dev, uint8_t reg_addr, u
 */
 static int get_coeff(uint32_t mclk, uint32_t rate)
 {
-    for (int i = 0; i < (sizeof(coeff_div) / sizeof(coeff_div[0])); i++) {
+    for (int i = 0; i < (int)(sizeof(coeff_div) / sizeof(coeff_div[0])); i++) {
         if (coeff_div[i].rate == rate && coeff_div[i].mclk == mclk) {
             return i;
         }
@@ -294,8 +295,8 @@ static esp_err_t es8311_fmt_config(es8311_handle_t dev, const es8311_resolution_
     ESP_RETURN_ON_ERROR(es8311_write_reg(dev, ES8311_RESET_REG00, reg00), TAG, "I2C read/write error"); // Slave serial port - default
 
     /* Setup SDP In and Out resolution */
-    es8311_resolution_config(res_in, &reg09);
-    es8311_resolution_config(res_out, &reg0a);
+    ESP_RETURN_ON_ERROR(es8311_resolution_config(res_in, &reg09), TAG, "invalid input resolution");
+    ESP_RETURN_ON_ERROR(es8311_resolution_config(res_out, &reg0a), TAG, "invalid output resolution");
 
     ESP_RETURN_ON_ERROR(es8311_write_reg(dev, ES8311_SDPIN_REG09, reg09), TAG, "I2C read/write error");
     ESP_RETURN_ON_ERROR(es8311_write_reg(dev, ES8311_SDPOUT_REG0A, reg0a), TAG, "I2C read/write error");
@@ -311,7 +312,7 @@ esp_err_t es8311_microphone_config(es8311_handle_t dev, bool digital_mic)
     if (digital_mic) {
         reg14 |= BIT(6);
     }
-    es8311_write_reg(dev, ES8311_ADC_REG17, 0xC8); // Set ADC gain @todo move this to ADC config section
+    ESP_RETURN_ON_ERROR(es8311_write_reg(dev, ES8311_ADC_REG17, 0xC8), TAG, "I2C read/write error"); // Set ADC gain @todo move this to ADC config section
 
     return es8311_write_reg(dev, ES8311_SYSTEM_REG14, reg14);
 }
@@ -430,13 +431,16 @@ void es8311_register_dump(es8311_handle_t dev)
     for (int reg = 0; reg < 0x4A; reg++) {
         uint8_t value;
         ESP_ERROR_CHECK(es8311_read_reg(dev, reg, &value));
-        printf("REG:%02x: %02x", reg, value);
+        printf("REG:%02x: %02x\n", reg, value);
     }
 }
 
 es8311_handle_t es8311_create(const unsigned int port, const uint16_t dev_addr)
 {
     es8311_dev_t *sensor = (es8311_dev_t *) calloc(1, sizeof(es8311_dev_t));
+    if (!sensor) {
+        return NULL;
+    }
     sensor->port = port;
     sensor->dev_addr = dev_addr;
     return (es8311_handle_t) sensor;

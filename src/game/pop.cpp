@@ -27,6 +27,11 @@ constexpr int OY = (POP_MH - MH) / 2;         // the how-to card and the result 
 constexpr int BACK_X = 126, BACK_Y = 8, BACK_W = 38, BACK_H = 15;   // the BACK button (logical px), clear of the screen's rounded corner
 constexpr float LAUNCH_X = 17.0f, LAUNCH_Y = (float)(POP_MH - CELL);   // the launcher's bubble (its top left corner, like every bubble here)
 constexpr float SPEED = 46.0f;                // dots a second in flight
+constexpr float POP_STEP = 0.5f;              // dots a shot moves per physics step: the flight and the dotted guide/popTrace use the same one, so the guide is exact
+constexpr float FALL_GRAV = 90.0f;            // dots a second squared: how fast popped-off bubbles drop
+constexpr float AIM_RANGE_PX = 74.0f;         // finger distance from the middle (logical px) for the full aim angle
+constexpr float OVER_SECS = 1.6f;             // how long the end of a game is shown before the result card
+constexpr float RESULT_TAP_SECS = 0.6f;       // the result card ignores taps this long (so the last one does not skip it)
 constexpr float HIT = 4.2f;                   // centres closer than this: it has hit (a little under a bubble's width, so
                                               // a shot can squeeze through a one-bubble gap)
 // '#' black, 'o' grey. A bubble is only 5 dots across (about 3 mm), too small for a mark inside a ring to read:
@@ -35,7 +40,7 @@ constexpr float HIT = 4.2f;                   // centres closer than this: it ha
 // which read as a third, faded circle beside the ring and the black one); the empty one is a plain ring and the
 // black one is dark right through. Any two differ in at least 8 of their 25 dots.
 const char* const ART[PK_COUNT][CELL] = {
-  {".....", ".....", ".....", ".....", "....."},
+  {".....", ".....", ".....", ".....", "....."},   // PK_NONE: an empty cell (bubble() never draws it; kept so rows match the PK_ values)
   {"#...#", ".#.#.", "..#..", ".#.#.", "#...#"},   // X
   {"..#..", "..#..", ".###.", ".###.", "#####"},   // triangle
   {"..#..", ".#o#.", "#ooo#", ".#o#.", "..#.."},   // diamond
@@ -49,7 +54,6 @@ void bubble(Matrix& m, int x, int y, int kind) {
     if (ch != '.') m.set(x + c, y + r, ch == '#' ? SH_INK : SH_MID);
   }
 }
-void popHearts(Matrix& m, int y, int n) { for (int i = 0; i < 4; i++) m.sprite(3 + i * 9, y, i < n ? SPR_HEART : SPR_HEART_E); }
 }  // namespace
 
 // The up-to-six bubbles that touch (r, c). Even rows sit at x = 5c, odd rows at x = 5c + 2.
@@ -83,7 +87,7 @@ uint8_t Game::popPick() {
 
 // Where a finger at logical x aims: straight up from the middle of the screen, further over toward the edges.
 float Game::popAngleAt(int px) {
-  float k = (px - W / 2) / 74.0f;
+  float k = (px - W / 2) / AIM_RANGE_PX;
   if (k < -1) k = -1;
   if (k > 1) k = 1;
   return k * POP_MAX_ANG;
@@ -125,13 +129,13 @@ bool Game::popAdvance(float& x, float& y, float& vx, float& vy, float dist, int&
   return true;
 }
 
-// Where a shot at this angle ends up (the dotted guide and the tests use it). False if it has nowhere to land.
+// Where a shot at this angle ends up (the sim and the tests use it; the dotted guide traces the same path in screenPop). False if it has nowhere to land.
 bool Game::popTrace(float ang, int& r, int& c, int* bounces) const {
   float x = LAUNCH_X, y = LAUNCH_Y, vx = sinf(ang) * SPEED, vy = -cosf(ang) * SPEED;
   if (bounces) *bounces = 0;
   for (int i = 0; i < 2000; i++) {
     bool b = false;
-    if (popAdvance(x, y, vx, vy, 0.5f, r, c, &b)) return r >= 0;
+    if (popAdvance(x, y, vx, vy, POP_STEP, r, c, &b)) return r >= 0;
     if (b && bounces) (*bounces)++;
   }
   return false;
@@ -177,10 +181,10 @@ void Game::popFire(float ang) {
 void Game::popEnd(bool won) {
   Pop& P = pop_;
   P.won = won; P.phase = 3; P.overT = 0;
-  // cleared before the ceiling moved: 4. Cleared after one drop: 3. Cleared at all: 2. Lost with most of them popped: 1.
+  // cleared before the ceiling moved: 4. Cleared after one drop: 3. Cleared at all: 2. Lost, but at least as many popped as there were at the start: 1.
   P.hearts = won ? (P.drops == 0 ? 4 : P.drops == 1 ? 3 : 2) : (P.popped >= P.start ? 1 : 0);
   pet.exercise(4.0f + 5.0f * P.hearts, 0.3f + 0.2f * P.hearts);
-  if (pet.d.evolving) pet.train(ACC_CLEAN, 0.1f * P.hearts);
+  pet.train(ACC_CLEAN, 0.1f * P.hearts);
   sv.lifeGames++;
   sound(won ? SND_WIN : SND_LOSE);
 }
@@ -258,11 +262,11 @@ void Game::screenPop() {
   char b[16];
   if (P.phase == 4) {   // the result, on a clear screen
     m_.textCenter(OY + 2, P.won ? "CLEAR!" : "STUCK!");
-    popHearts(m_, OY + 12, P.hearts);
+    m_.hearts(OY + 12, P.hearts);
     snprintf(b, sizeof b, "%d POPPED", P.popped);
     m_.smallCenter(OY + 21, b, SH_MID);
     P.overT += dt;
-    if (P.overT > 0.6f && in.tap) setScreen(S_MAIN);
+    if (P.overT > RESULT_TAP_SECS && in.tap) setScreen(S_MAIN);
     return;
   }
   if (P.card > 0) {   // the card: how to play, with the five kinds along the bottom (a tap starts it, or it starts by itself)
@@ -281,18 +285,18 @@ void Game::screenPop() {
     if (P.aiming && in.down) P.ang = popAngleAt(in.x);
     if (P.aiming && !in.down) { P.aiming = false; popFire(P.ang); }
   } else if (P.phase == 2) {   // in flight
-    // (in the same half-dot steps the dotted guide is traced in, so it lands exactly where the guide said)
+    // (in the same POP_STEP steps the dotted guide is traced in, so it lands exactly where the guide said)
     P.carry += SPEED * dt;
-    while (P.carry >= 0.5f && P.phase == 2) {
-      P.carry -= 0.5f;
+    while (P.carry >= POP_STEP && P.phase == 2) {
+      P.carry -= POP_STEP;
       int r, c; bool bounced = false;
-      const bool landed = popAdvance(P.bx, P.by, P.vx, P.vy, 0.5f, r, c, &bounced);
+      const bool landed = popAdvance(P.bx, P.by, P.vx, P.vy, POP_STEP, r, c, &bounced);
       if (bounced) sound(SND_BOUNCE);
       if (landed) popLand(r, c);
     }
   } else if (P.phase == 3) {   // over: a moment to see how it ended
     P.overT += dt;
-    if (P.overT > 1.6f) { P.phase = 4; P.overT = 0; return; }
+    if (P.overT > OVER_SECS) { P.phase = 4; P.overT = 0; return; }
   }
   if (P.shake > 0) P.shake -= dt;
   const int jx = P.shake > 0 && ((int)(P.t * 24) & 1) ? 1 : 0;   // the field shudders as the ceiling comes down
@@ -307,7 +311,7 @@ void Game::screenPop() {
     float x = LAUNCH_X, y = LAUNCH_Y, vx = sinf(P.ang) * SPEED, vy = -cosf(P.ang) * SPEED;
     int r, c;
     for (int i = 1; i < 400; i++) {
-      if (popAdvance(x, y, vx, vy, 0.5f, r, c, nullptr)) break;
+      if (popAdvance(x, y, vx, vy, POP_STEP, r, c, nullptr)) break;
       if (i % 5 == 0 && y < LAUNCH_Y - 3.0f) m_.set((int)lroundf(x) + 2, (int)lroundf(y) + 2, SH_MID);
     }
   }
@@ -324,7 +328,7 @@ void Game::screenPop() {
     f.t += dt;
     if (f.t < 0) { bubble(m_, (int)f.x, (int)f.y, f.kind); continue; }   // (its turn hasn't come: they go one after another)
     if (f.fall) {
-      f.vy += 90.0f * dt; f.y += f.vy * dt;
+      f.vy += FALL_GRAV * dt; f.y += f.vy * dt;
       if (f.y > POP_MH) { f.on = false; continue; }
       bubble(m_, (int)f.x, (int)lroundf(f.y), f.kind);
     } else {

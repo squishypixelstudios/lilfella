@@ -3,7 +3,6 @@
 #pragma once
 #include <stdint.h>
 
-
 namespace lf {
 
 enum Sound : uint8_t {

@@ -1,4 +1,4 @@
-# Lil Fella (v1.0.1)
+# Lil Fella (v1.0.2)
 
 A classic, 2-bit virtual pet for the **Waveshare ESP32-S3-Touch-AMOLED-2.16**, the
 **ESP32-S3-Touch-AMOLED-1.8 (V2)** and the **ESP32-S3-Touch-LCD-1.83**: a 40x28 dot-matrix "LCD" in four shades of
@@ -19,7 +19,7 @@ settings, endings and flashing, plus [every status effect](docs/wiki/Status-Effe
 | | AMOLED-2.16 | AMOLED-1.8 | LCD-1.83 |
 | --- | --- | --- | --- |
 | PlatformIO environment | `amoled216` (the default) | `amoled18` | `lcd183` |
-| ready-built image (in `firmware/`) | `lil-fella-v1.0.1-amoled216-merged.bin` | `lil-fella-v1.0.1-amoled18-merged.bin` | `lil-fella-v1.0.1-lcd183-merged.bin` |
+| ready-built image (in `firmware/`) | `lil-fella-v1.0.2-amoled216-merged.bin` | `lil-fella-v1.0.2-amoled18-merged.bin` | `lil-fella-v1.0.2-lcd183-merged.bin` |
 | panel | 480x480 AMOLED | 368x448 AMOLED | 240x284 IPS LCD (ST7789) |
 | the game's picture | 368x448 in the middle, LCD background around it | the whole panel | scaled to 230x280 (5 panel pixels for every 4 of the frame's, smoothed), a thin border around it |
 | touch | CST9220 | CST816 (V2) / FT3168 | CST816 |

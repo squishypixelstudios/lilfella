@@ -93,10 +93,11 @@ void Matrix::sprite(int x, int y, int id, bool flip, int mode, uint8_t fill, uin
   auto at = [&](int c, int r) -> uint8_t { return (c < 0 || r < 0 || c >= w || r >= h) ? 0 : sp.px[r * w + c]; };
   auto put = [&](int c, int r, uint8_t s) { set(x + (flip ? w - 1 - c : c), y + r, s); };
 
-  // body fill: everything not reachable from outside (4-connected) and not outline
+  // Sprites that fit the matrix get the effects below (every sprite today does: the biggest is 36 x 27 dots).
+  constexpr int MAX_W = MW - 2, MAX_H = MH;   // (the fill flood needs a one-dot border all round, so it fits MW x (MH + 2))
   if (sick) {   // the speckle: inside the body's span along both its row and its column (works for open outlines too)
-    int8_t rmin[32], rmax[32], cmin[40], cmax[40];
-    if (w <= 40 && h <= 32) {
+    int8_t rmin[MAX_H], rmax[MAX_H], cmin[MAX_W], cmax[MAX_W];
+    if (w <= MAX_W && h <= MAX_H) {
       for (int r = 0; r < h; r++) { rmin[r] = 127; rmax[r] = -1; }
       for (int c = 0; c < w; c++) { cmin[c] = 127; cmax[c] = -1; }
       for (int r = 0; r < h; r++) for (int c = 0; c < w; c++) if (at(c, r)) {
@@ -109,12 +110,13 @@ void Matrix::sprite(int x, int y, int id, bool flip, int mode, uint8_t fill, uin
         if (!at(c, r) && c > rmin[r] && c < rmax[r] && r > cmin[c] && r < cmax[c] && !((x + (flip ? w - 1 - c : c) + y + r) & 1)) put(c, r, sick);
     }
   }
+  // body fill: everything not reachable from outside (4-connected) and not outline
   if (fill) {
-    static uint8_t out[40 * 30];
+    static uint8_t out[MW * (MH + 2)];
     const int bw = w + 2, bh = h + 2;
-    if (bw <= 40 && bh <= 30) {
+    if (bw <= MW && bh <= MH + 2) {
       for (int i = 0; i < bw * bh; i++) out[i] = 0;
-      static int16_t stack[40 * 30];
+      static int16_t stack[MW * (MH + 2)];
       int sp_ = 0;
       stack[sp_++] = 0; out[0] = 1;
       while (sp_) {
@@ -162,10 +164,7 @@ void Matrix::small(int x, int y, const char* s, uint8_t sh, int spaceAdv) {
   for (; *s; s++) {
     if (*s == ' ') { x += spaceAdv; continue; }
     const G35* g = glyph35(*s);
-    x += 4;
-    if (!g) continue;
-    x -= 4;
-    for (int r = 0; r < 5; r++) for (int c = 0; c < 3; c++) if (g->r[r] & (4 >> c)) set(x + c, y + r, sh);
+    if (g) for (int r = 0; r < 5; r++) for (int c = 0; c < 3; c++) if (g->r[r] & (4 >> c)) set(x + c, y + r, sh);   // (a character with no glyph is a blank)
     x += 4;
   }
 }
@@ -178,7 +177,7 @@ void Matrix::smallCenter(int y, const char* s, uint8_t sh) {
 int Matrix::smallWidth(const char* s, int spaceAdv) {
   int w = 0;
   for (const char* p = s; *p; p++) w += *p == ' ' ? spaceAdv : 4;
-  if (w && s[0]) { const char* e = s; while (e[1]) e++; if (*e != ' ') w -= 1; }
+  if (w) { const char* e = s; while (e[1]) e++; if (*e != ' ') w -= 1; }
   return w;
 }
 

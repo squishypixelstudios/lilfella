@@ -128,10 +128,6 @@ enum SpriteId : uint8_t {
   SPR_IC_METER,
   SPR_IC_LOCK,
   SPR_IC_UNLOCK,
-  SPR_WAND,
-  SPR_CUP_TIP,
-  SPR_SCRATCH,
-  SPR_CLICK,
   SPR_IC_CALL,
   SPR_COUNT
 };

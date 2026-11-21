@@ -11,12 +11,12 @@ namespace lf {
 //   sv.eq[0]          screen palette: 0 classic LCD, 1 night (inverted)
 //   sv.eq[1]          touch debug overlay on/off
 //   sv.eq[2]          auto off when untouched: 0 after 5 s, 2 after 15 s, 3 after 30 s (default), 4 after 1 min, 1 never
-//   pet.d.pad0[0]     the looks the player picked: bits0-1 child, bits2-4 teen, bits5-7 adult (0 = not picked, else index+1 in
-//                     the list the path so far allows, see the evolution tree below)
-//   pet.d.pad0[1]     LOCK (1 = locked; it was the training bar until v0.08)
+//   pet.d.pad0[0]     the looks the player picked: bits0-1 Lil Blub, bits2-4 Lil Blunkus, bits5-7 Lil Fella (0 = not picked, else
+//                     index+1 in the list the path so far allows, see the evolution tree below)
+//   pet.d.pad0[1]     LOCK (1 = locked)
 //   pet.d.pad1[0]     care mistakes
-//   pet.d.pad2        first-hour lessons (see game.h), sadness: pet.d.sadness, nextSick / sleepyMin: the scheduled events
-//   pet.d.pad1[1]     bit0 light off, bit1 looks packed in the evolution-tree layout
+//   pet.d.pad1[1]     bit0 light off, bit1 looks packed in the evolution-tree layout, bits2-4 the Big Blorbus pick
+//   pet.d.pad2        first-hour lessons (see game.h)
 
 static const char* const kNames[] = {   // a new blob's random name (11 characters at most)
   "Pickles", "Pumpkin", "Muffin", "Tofu", "Ziggy", "Olive", "Bean", "Mochi",
@@ -78,7 +78,7 @@ Form Game::bigOf(Form f, int child) {   // child: the Lil Blub pick (index + 1);
   switch (f) {
     case F_AD_JELLY: case F_AD_PUFF: return child == 1 ? F_BB_BLOBBERT : F_COUNT;   // Big Blobbert: the Blobbert line only
     case F_AD_BALLBOI: return child == 3 ? F_BB_BALLBOI : F_COUNT;
-    case F_AD_NIMBUS: case F_AD_LOAF: return F_BB_ALIEN;
+    case F_AD_NIMBUS: case F_S1C: return F_BB_ALIEN;   // Nimbus or Dapper (Loaf could until v1.0.2)
     default: return F_COUNT;
   }
 }
@@ -153,7 +153,7 @@ void Game::begin() {
     DateTime d = fromEpoch(epoch);
     clockSel_[0] = d.year; clockSel_[1] = d.month; clockSel_[2] = d.day; clockSel_[3] = d.hour; clockSel_[4] = d.minute;
   }
-  // one mode only (old saves made in HARD mode are switched over)
+  // one mode only (old saves made in the retired hard mode are switched over)
   const bool firstStart = sv.mode == MODE_UNSET;
   sv.mode = MODE_EASY;
   if (firstStart) { clockNext_ = S_SETUP_NAME; scr = S_SETUP_CLOCK; }
@@ -224,7 +224,7 @@ void Game::autosave(bool force) {
 
 void Game::newPet() {
   pet.newPet(plat->randomSeed() ^ nowMs ^ epoch, 0, nameBuf_);
-  pet.d.evolving = 1;   // the breed (weight gain, bubbles, coat) is decided by how they're raised
+  pet.d.evolving = 1;   // the breed (weight gain, bubble rate, coat) is decided by how they're raised
   pet.d.pad2 = 0x8000;  // first-hour lessons on
   sv.mode = MODE_EASY;  // set up (after Erase everything the save is MODE_UNSET until the next blob)
   tutWant_ = -1; tutNext_ = DROP_AGE;   // (the first "HELLO!" waits for the drop to land, see lessonTick)
@@ -281,7 +281,11 @@ void Game::say(const char* s, float secs) {
 // ---------------------------------------------------------------------------------------------
 Form Game::form() const {
   const Form f = lilFellaForm();
-  if (pet.d.age >= AGE_BLORBUS && evoChoice(4) == 1) { const Form b = bigOf(f, evoChoice(1)); if (b != F_COUNT) return b; }
+  if (pet.d.age >= AGE_BLORBUS && evoChoice(4) == 1) {
+    const Form b = bigOf(f, evoChoice(1));
+    if (b != F_COUNT) return b;
+    if (f == F_AD_LOAF) return F_BB_ALIEN;   // a Loaf that already took the Alien Cat (before Dapper replaced Loaf) stays one
+  }
   return f;
 }
 
@@ -295,6 +299,25 @@ Form Game::lilFellaForm() const {
     if (c && c <= evoCount(s)) return evoOption(s, c - 1).form;
   }
   return F_BABY;
+}
+
+// Developer option (Settings page 3): jump straight to one of the three Big Blorbus looks, wherever the fella is in life.
+// Each tap goes on to the next: Big Blob, Big Ball, Alien Cat. It makes them 8 days old, skips the first-hour lessons and
+// sets the looks picked on the way (whatever was picked before is replaced) so that look is the one they grow into.
+void Game::debugJumpBig() {
+  if (!sv.hasBlob || form() == F_DROPPER) return;
+  // the picks (index + 1 at Lil Blub, Lil Blunkus, Lil Fella) that lead to each: Jelly > Big Blob, Ballboi > Big Ball, Nimbus > Alien Cat
+  static const uint8_t PATH[3][3] = {{1, 2, 2}, {3, 3, 3}, {1, 4, 1}};
+  const Form now = form();
+  const int next = now == F_BB_BLOBBERT ? 1 : now == F_BB_BALLBOI ? 2 : 0;   // from anything else: start at Big Blob
+  PetData& d = pet.d;
+  for (int s = 1; s <= 3; s++) evoSetChoice(s, PATH[next][s - 1]);
+  evoSetChoice(4, 1);
+  if (d.age < AGE_BLORBUS) d.age = AGE_BLORBUS;
+  d.pad2 |= 0x40FF;   // lessons finished
+  tutWant_ = -1; newbornT_ = 0;
+  say(lookName(form()), 3.0f);
+  autosave(true);
 }
 
 // The first stage they've reached without the player having picked its look (0 = none).
@@ -311,7 +334,7 @@ int Game::pendingEvolution() const {
   return 0;
 }
 
-// Called every frame: the squeeze out of the dropper, the "grow" flash, and the evolution picker when they reach a new stage.
+// Called every frame: the squeeze out of the dropper, the "grow" flash, and the level-up that opens the evolution picker.
 void Game::checkGrowth() {
   if (!sv.hasBlob) return;
   const Form now = form();
@@ -618,7 +641,9 @@ void Game::handleEvents() {
       case EV_EXPLORE_GO: sound(SND_COO_SOFT); say("EXPLORING", 3); break;
       case EV_WARN: sound(SND_SAD); break;
       case EV_WOKE_ANGRY: sound(SND_GRUMBLE); say(e.arg ? "YAWN" : "GRR!"); break;
-      case EV_WAKE: if (!isNight(hour, minute) || newbornT_ > 0) { setLight(false); sound(SND_COO_SOFT); } break;   // (a newborn up from its test nap at night: light on too, they're not in bed yet)   // morning: the light comes on (woken in the night - fed, say - it stays off)
+      // morning: the light comes on (woken in the night - fed, say - it stays off); a newborn up from its test nap at night
+      // gets the light too, they're not in bed yet
+      case EV_WAKE: if (!isNight(hour, minute) || newbornT_ > 0) { setLight(false); sound(SND_COO_SOFT); } break;
       case EV_SLEEP: if (isNight(hour, minute)) sound(SND_YAWN); break;   // bedtime
       default: break;
     }

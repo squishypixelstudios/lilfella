@@ -12,7 +12,7 @@ The 2.16 and LCD-1.83 builds compile, but the project notes say nobody had watch
 
 ## Flashing a ready-built image
 
-Ready-made images are in the project's `firmware` folder: one for each board (`lil-fella-v1.0.1-<board>-merged.bin`). Flash the right one at address 0.
+Ready-made images are in the project's `firmware` folder: one for each board (`lil-fella-v1.0.2-<board>-merged.bin`). Flash the right one at address 0.
 
 **In a browser (Chrome or Edge):** open Espressif's ESP Tool web page, press Connect, add the file at address 0, and press Program.
 
